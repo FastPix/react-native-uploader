@@ -34,8 +34,8 @@
   "scripts": {
     "example": "yarn workspace react-native-uploads-example",
     "clean": "del-cli android/build example/android/build example/android/app/build example/ios/build lib",
-    "prepare": "bob build",
-    "typecheck": "tsc",
+    "prepare": "bob build && tsc --project tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
     "release": "release-it --only-version",
     "lint": "eslint \"**/*.{js,ts,tsx}\"",
     "test": "jest"
@@ -61,26 +61,28 @@
   "devDependencies": {
     "@eslint/compat": "^2.0.3",
     "@eslint/eslintrc": "^3.3.5",
-    "@eslint/js": "^10.0.1",
-    "@jest/globals": "^30.0.0",
+    "@eslint/js": "^9.39.0",
+    "@jest/globals": "^29.7.0",
     "@react-native/babel-preset": "0.85.0",
     "@react-native/eslint-config": "0.85.0",
     "@react-native/jest-preset": "0.85.0",
     "@release-it/conventional-changelog": "^10.0.6",
+    "@types/jest": "^29.5.14",
     "@types/react": "^19.2.0",
     "del-cli": "^7.0.0",
-    "eslint": "^9.39.4",
+    "eslint": "^8.57.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-ft-flow": "^3.0.11",
     "eslint-plugin-prettier": "^5.5.5",
-    "jest": "^30.3.0",
+    "hermes-eslint": "^0.36.1",
+    "jest": "^29.7.0",
     "prettier": "^3.8.1",
     "react": "19.2.3",
     "react-native": "0.85.0",
     "react-native-builder-bob": "^0.41.0",
     "release-it": "^19.2.4",
     "turbo": "^2.8.21",
-    "typescript": "^6.0.2"
+    "typescript": "^5.9.2"
   },
   "peerDependencies": {
     "react": "*",
@@ -98,12 +100,6 @@
         "module",
         {
           "esm": true
-        }
-      ],
-      [
-        "typescript",
-        {
-          "project": "tsconfig.build.json"
         }
       ]
     ]
@@ -138,7 +134,12 @@
     "preset": "@react-native/jest-preset",
     "modulePathIgnorePatterns": [
       "<rootDir>/example/node_modules",
-      "<rootDir>/lib/"
+      "<rootDir>/lib/",
+      "<rootDir>/dist/"
+    ],
+    "testMatch": [
+      "**/__tests__/**/*.test.ts",
+      "**/__tests__/**/*.test.tsx"
     ]
   },
   "create-react-native-library": {
@@ -150,5 +151,10 @@
       "jest"
     ],
     "version": "0.62.0"
+  },
+  "dependencies": {
+    "@react-native-community/netinfo": "^12.0.1",
+    "axios": "^1.17.0",
+    "react-native-blob-util": "^0.24.9"
   }
 }
