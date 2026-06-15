@@ -45,7 +45,7 @@ export interface UploadEngineOptions {
   retryDelay: number;
 
   /** Fired at the start of every chunk attempt (including retries). */
-  onChunkAttempt: (chunkIndex: number, attemptNumber: number) => void;
+  onChunkAttempt: (chunkIndex: number, attemptNumber: number, totalChunkNumbers: number) => void;
 
   /** Fired when a chunk attempt fails but will be retried. */
   onChunkAttemptFailure: (
@@ -153,7 +153,7 @@ export class UploadEngine {
           return { success: false, error: new Error('Upload was aborted.') };
         }
 
-        onChunkAttempt(chunk.index, attempt + 1);
+        onChunkAttempt(chunk.index, attempt + 1, chunks.length);
 
         try {
           await this._uploadChunk(chunk, endpoint, fileUri, signal);

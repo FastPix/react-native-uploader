@@ -369,12 +369,13 @@ export class FastPixUpload {
       maxRetries: this._opts.maxRetries,
       retryDelay: this._opts.retryDelay,
 
-      onChunkAttempt: (chunkIndex, attemptNumber) => {
+      onChunkAttempt: (chunkIndex, attemptNumber, totalChunkNumbers) => {
         console.log('[FastPix:FastPixUpload] Chunk attempt', {
           chunkIndex,
           attemptNumber,
+          totalChunkNumbers,
         });
-        this._emitter.emit('chunkAttempt', { chunkIndex, attemptNumber });
+        this._emitter.emit('chunkAttempt', { chunkIndex, attemptNumber, totalChunkNumbers });
       },
 
       onChunkAttemptFailure: (chunkIndex, attemptNumber, error) => {

@@ -30,6 +30,7 @@ export interface UploadEventPayloads {
     chunkAttempt: {
         chunkIndex: number;
         attemptNumber: number;
+        totalChunkNumbers: number;
     };
     /** Fired when a chunk attempt fails and will be retried. */
     chunkAttemptFailure: {

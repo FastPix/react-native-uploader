@@ -52,7 +52,7 @@ export interface UploadEventPayloads {
   progress: { bytesUploaded: number; bytesTotal: number; percentage: number };
 
   /** Fired at the start of every chunk upload attempt, including retries. */
-  chunkAttempt: { chunkIndex: number; attemptNumber: number };
+  chunkAttempt: { chunkIndex: number; attemptNumber: number , totalChunkNumbers: number};
 
   /** Fired when a chunk attempt fails and will be retried. */
   chunkAttemptFailure: { chunkIndex: number; attemptNumber: number; error: Error };

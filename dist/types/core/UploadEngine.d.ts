@@ -35,7 +35,7 @@ export interface UploadEngineOptions {
     maxRetries: number;
     retryDelay: number;
     /** Fired at the start of every chunk attempt (including retries). */
-    onChunkAttempt: (chunkIndex: number, attemptNumber: number) => void;
+    onChunkAttempt: (chunkIndex: number, attemptNumber: number, totalChunkNumbers: number) => void;
     /** Fired when a chunk attempt fails but will be retried. */
     onChunkAttemptFailure: (chunkIndex: number, attemptNumber: number, error: Error) => void;
     /** Fired after a chunk is fully acknowledged by the server. */
