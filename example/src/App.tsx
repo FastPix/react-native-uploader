@@ -41,7 +41,7 @@ export default function App() {
 
     const uploadDetails = await ApiService.createDirectUpload();
 
-    log(`Recieved upload details form Api : ${uploadDetails?.url} : ${uploadDetails?.uploadId}`);
+    // log(`Recieved upload details form Api : ${uploadDetails?.url} : ${uploadDetails?.uploadId}`);
 
     if(!uploadDetails)
     {

@@ -1,0 +1,2248 @@
+Demo
+
+
+import UIKit
+import AVKit
+import FastPixPlayerSDKTest
+import Foundation
+
+
+class VideoPlayerViewController: UIViewController, AVPlayerViewControllerDelegate {
+   
+    @IBOutlet weak var playerView: UIView!
+   
+    private var playPauseButton: UIButton!
+    private var prevButton: UIButton!
+    private var nextButton: UIButton!
+    private var playlistButton: UIButton!
+    private var pipButton: UIButton!
+    private var fullscreenButton: UIButton!
+   
+    var playbackID: String = ""
+    var videoTitle: String = ""
+    var isFullScreen: Bool = false
+    var playbackToken: String? = ""
+    var customDomain: String? = ""
+    var streamType: String = ""
+    var minResolution: MinResolution = .standard
+    var maxResolution: MaxResolution = .standard
+    var renditionOrder: RenditionOrder = .standard
+    var setResolution: Resolutions = .standard
+   
+    private var didSetupFullscreen = false
+    private var controlsHideWorkItem: DispatchWorkItem?
+    private var playPauseCenterYConstraint: NSLayoutConstraint!
+    private var playerStatusObserver: NSKeyValueObservation?
+   
+    lazy var playerViewController = AVPlayerViewController()
+   
+    private var playerLayer = AVPlayerLayer()
+    private let seekBar = FastPixSeekBar()
+    private var seekManager: FastPixSeekManager?
+    private var fullScreenManager: FastPixFullscreenManager?
+   
+    private var loadingView: UIActivityIndicatorView?
+    private var pipBlurView: UIVisualEffectView?
+    private var isPiPForegroundMode = false
+    private var seekBarBottomConstraint: NSLayoutConstraint!
+   
+    private var didSetupFastPixSeekUI = false
+    private var isUserSeeking = false
+   
+    // MARK: - Preload & Precache
+    private let preloadManager = PreloadManager.shared
+    private let precacheManager = PrecacheManager.shared
+    private var playlist: [FastPixPlaylistItem] = []
+   
+    private let tapBackgroundView = UIView()
+   
+    private var leftSeekOverlay: UIView?
+    private var rightSeekOverlay: UIView?
+   
+    private let leftSeekGestureView = UIView()
+    private let rightSeekGestureView = UIView()
+   
+    private var volumeSlider: UISlider!
+    private var muteButton: UIButton!
+    private var rateLabel: UILabel!
+   
+    private var skipButton: UIButton!
+   
+    private var controlsVisible = false
+   
+    private var audioTrackButton: UIButton!
+   
+    private var subtitleBottomConstraint: NSLayoutConstraint!
+   
+    private var qualityButton: UIButton!
+   
+    private let subtitleLabel: UILabel = {
+        let label = UILabel()
+        label.textColor = .white
+        label.font = UIFont.systemFont(ofSize: 16, weight: .medium)
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        label.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+   
+    private var titleLabel: UILabel = {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.textColor = .white
+        label.font = UIFont.boldSystemFont(ofSize: 16)
+        label.textAlignment = .center
+        return label
+    }()
+   
+    // MARK: - Lifecycle
+    override func viewDidLoad() {
+        super.viewDidLoad()
+       
+        if #available(iOS 13.0, *) {
+            isModalInPresentation = true
+        }
+       
+        playerViewController.view.backgroundColor = .black
+        playerView.backgroundColor = .black
+       
+        configureAudioSession()
+       
+        if playerViewController.enablePiP == false {
+            playerViewController.allowsPictureInPicturePlayback = false
+            playerViewController.canStartPictureInPictureAutomaticallyFromInline = false
+        } else {
+            playerViewController.allowsPictureInPicturePlayback = true
+            playerViewController.canStartPictureInPictureAutomaticallyFromInline = true
+        }
+       
+        view.addSubview(titleLabel)
+        NSLayoutConstraint.activate([
+            titleLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            titleLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor)
+        ])
+       
+        fullScreenManager = FastPixFullscreenManager(playerView: playerViewController.view,
+                                                     parentViewController: self)
+        prepareAvPlayerController()
+        view.bringSubviewToFront(titleLabel)
+        setupSubtitleLabel()
+        view.bringSubviewToFront(subtitleLabel)
+        setupLoadingView()
+        setupSeekGestureZones()
+        setupPlayPauseButton()
+        setupSeekVisuals()
+        playerViewController.fastPixVolumeDelegate = self
+        setupVolumeControls()
+        setupPlaybackRateControls()
+       
+        playlist = [
+            FastPixPlaylistItem(
+                playbackId: "16ac212a-0f4f-49c5-9fd7-a42d9ff61541",
+                title: "First-Video",
+                //                duration: "02:45:00",
+                token: "",
+                drmToken: ""
+            ),
+            FastPixPlaylistItem(
+                playbackId: "2125094c-db43-4748-90e1-18539f2ccf98",
+                title: "AudioTracks & Subtitles",
+                //                duration: "02:45:00",
+                token: "",
+                drmToken: ""
+            ),
+            FastPixPlaylistItem(
+                playbackId: "ca854fd4-a3d0-4525-bd43-80de50887e1a",
+                title: "Video-3",
+                //                duration: "02:45:00",
+                token: "",
+                drmToken: ""
+            ),
+            FastPixPlaylistItem(
+                playbackId: "3ad91e5f-0f45-403f-bda0-2a668a3581ee",
+                title: "Video-4",
+                //                duration: "02:45:00",
+                token: "",
+                drmToken: ""
+            )
+        ]
+       
+        playerViewController.addPlaylist(playlist)
+       
+        // MARK: - Preload & Precache Setup
+        preloadManager.delegate = self
+        precacheManager.delegate = self
+        preloadNextVideos()
+        precacheUpcomingVideos()
+       
+        DispatchQueue.main.async {
+            guard self.playerViewController.player != nil else {
+                print("Player still nil in viewDidAppear")
+                return
+            }
+           
+            self.playerViewController.setupSkipManager(delegate: self)
+            self.setupSkipButton()
+        }
+       
+        playerViewController.isLoopEnabled = true
+        playerViewController.isAutoPlayEnabled = true
+       
+        playerViewController.setPlaybackSpeed(.x1)
+        updateRateLabel()
+       
+        //Audio Tracks
+        playerViewController.audioTrackDelegate = self
+        //        playerViewController.setPreferredAudioTrack("Hindi")
+        setupAudioTrackButton()
+       
+        //Subtitle Tracks
+        playerViewController.subtitleTrackDelegate = self
+        //        playerViewController.setPreferredSubtitleTrack("German")
+       
+        //Resolution switching
+        setupQualityButton()
+        playerViewController.qualityDelegate = self
+        playerViewController.setupQualityManager(delegate: self)
+       
+        setupPlaylistStateObserver()
+        playerViewController.hideDefaultControls = true
+        setupSeekBar()
+        if playerViewController.hasPlaylist && playerViewController.playlistCount > 1 {
+            addCustomControls()
+            setupBottomControlsRow()
+            updateButtonVisibility()
+        }
+       
+        updateCurrentTitle()
+        playerViewController.setupSeekManager(delegate: self)
+       
+        if !didSetupFastPixSeekUI {
+            didSetupFastPixSeekUI = true
+           
+            playerViewController.configureSeekButtons(
+                enablePortrait: true,
+                enableLandscape: true,
+                forwardIncrement: 10,
+                backwardIncrement: 10
+            )
+            playerViewController.fastpix_setupSeekButtons()
+            styleSeekButtons()
+        }
+        let previewConfig = FastPixSeekPreviewConfig()
+        playerViewController.loadSpritesheet(
+            url: nil,
+            previewEnable: true,
+            config: previewConfig
+        )
+        playerViewController.setFallbackMode(.timestamp)
+       
+        guard let overlay = playerViewController.contentOverlayView else { return }
+       
+        let tapGesture = UITapGestureRecognizer(
+            target: self,
+            action: #selector(togglePlayerControls)
+        )
+        overlay.addGestureRecognizer(tapGesture)
+       
+        tapGesture.cancelsTouchesInView = false
+        tapGesture.delegate = self
+       
+        if let player = playerViewController.player {
+            playerStatusObserver = player.observe(
+                \.timeControlStatus,
+                 options: [.new, .initial]
+            ) { [weak self] player, _ in
+                DispatchQueue.main.async {
+                    self?.updatePlayPauseButton(for: player.timeControlStatus)
+                   
+                    if player.timeControlStatus == .playing {
+                        self?.playerViewController.qualityManager?.loadQualityLevels()
+                    }
+                   
+                    switch player.timeControlStatus {
+                    case .waitingToPlayAtSpecifiedRate:
+                        self?.showLoader()
+                    case .playing, .paused:
+                        self?.hideLoader()
+                       
+                    @unknown default:
+                        break
+                    }
+                }
+            }
+        }
+       
+        setupFullscreenButton()
+        playerViewController.setupFullscreen(parent: self, container: playerView)
+        setupPiPButton()
+       
+        NotificationCenter.default.addObserver(self, selector: #selector(handlePiPAvailabilityChanged(_:)), name: Notification.Name("FastPixPiPAvailabilityChangedNotification"), object: nil)
+       
+        NotificationCenter.default.addObserver(self, selector: #selector(appDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
+       
+        NotificationCenter.default.addObserver(self, selector: #selector(fullscreenStateChanged(_:)), name: Notification.Name("FastPixFullscreenStateChangedNotification"), object: playerViewController)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePlaybackStalledUI),
+            name: Notification.Name("PlaybackStalled"),
+            object: playerViewController
+        )
+       
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePlaybackResumedUI),
+            name: Notification.Name("PlaybackResumed"),
+            object: playerViewController
+        )
+       
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePiPStateChanged(_:)),
+            name: Notification.Name("FastPixPiPStateChangedNotification"),
+            object: playerViewController
+        )
+       
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppWillResignActive),
+            name: UIApplication.willResignActiveNotification,
+            object: nil
+        )
+       
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil
+        )
+    }
+   
+    private func setupAudioTrackButton() {
+       
+        guard let overlay = playerViewController.contentOverlayView else { return }
+       
+        audioTrackButton = UIButton(type: .system)
+        audioTrackButton.translatesAutoresizingMaskIntoConstraints = false
+       
+        //        audioTrackButton.setImage(UIImage(systemName: "gearshape"), for: .normal)
+        audioTrackButton.setImage(UIImage(systemName: "captions.bubble.fill"), for: .normal)
+        audioTrackButton.tintColor = .white
+       
+        audioTrackButton.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        audioTrackButton.layer.cornerRadius = 18
+        audioTrackButton.clipsToBounds = true
+       
+        audioTrackButton.imageView?.contentMode = .scaleAspectFit
+       
+        audioTrackButton.addTarget(self,
+                                   action: #selector(showAudioTracks),
+                                   for: .touchUpInside)
+       
+        audioTrackButton.isHidden = true
+       
+        overlay.addSubview(audioTrackButton)
+       
+        NSLayoutConstraint.activate([
+            audioTrackButton.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -16),
+            audioTrackButton.bottomAnchor.constraint(equalTo: overlay.bottomAnchor, constant: -60),
+            audioTrackButton.widthAnchor.constraint(equalToConstant: 36),
+            audioTrackButton.heightAnchor.constraint(equalToConstant: 36)
+        ])
+    }
+   
+    private func setupQualityButton() {
+       
+        guard let overlay = playerViewController.contentOverlayView else { return }
+       
+        qualityButton = UIButton(type: .system)
+        qualityButton.translatesAutoresizingMaskIntoConstraints = false
+       
+        qualityButton.setImage(UIImage(systemName: "gearshape.fill"), for: .normal)
+        qualityButton.tintColor = .white
+       
+        qualityButton.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        qualityButton.layer.cornerRadius = 18
+        qualityButton.clipsToBounds = true
+       
+        qualityButton.addTarget(self,
+                                action: #selector(showQualityOptions),
+                                for: .touchUpInside)
+       
+        overlay.addSubview(qualityButton)
+       
+        NSLayoutConstraint.activate([
+            qualityButton.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -16),
+            qualityButton.bottomAnchor.constraint(equalTo: overlay.bottomAnchor, constant: -110),
+            qualityButton.widthAnchor.constraint(equalToConstant: 36),
+            qualityButton.heightAnchor.constraint(equalToConstant: 36)
+        ])
+    }
+   
+    @objc private func showQualityOptions() {
+       
+        let levels = playerViewController.getResolutionLevels()
+        let current = playerViewController.getCurrentResolutionLevel()
+       
+        guard !levels.isEmpty else {
+            return
+        }
+       
+        let alert = UIAlertController(
+            title: "Video Quality",
+            message: nil,
+            preferredStyle: .actionSheet
+        )
+       
+        for level in levels {
+           
+            let isSelected = level.id == current?.id
+            let title = isSelected ? "✓  \(level.label)" : "    \(level.label)"
+           
+            alert.addAction(UIAlertAction(title: title, style: .default) { _ in
+               
+                if level.isAuto {
+                    self.playerViewController.resetToAuto()
+                } else {
+                    self.playerViewController.setResolutionLevel(level)
+                }
+            })
+        }
+       
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+       
+        present(alert, animated: true)
+    }
+   
+    private func setupSubtitleLabel() {
+        // Must be added to playerViewController.view, not self.view
+        subtitleLabel.removeFromSuperview()
+        playerViewController.view.addSubview(subtitleLabel)
+        playerViewController.view.bringSubviewToFront(subtitleLabel)
+       
+        // Portrait: controls row (60) + seekbar (60) + padding (10) = -130
+        // Landscape: controls row + seekbar are same height but video is fullscreen
+        subtitleBottomConstraint = subtitleLabel.bottomAnchor.constraint(
+            equalTo: playerViewController.view.bottomAnchor,
+            constant: -130
+        )
+       
+        NSLayoutConstraint.activate([
+            subtitleLabel.leadingAnchor.constraint(
+                equalTo: playerViewController.view.leadingAnchor,
+                constant: 20
+            ),
+            subtitleLabel.trailingAnchor.constraint(
+                equalTo: playerViewController.view.trailingAnchor,
+                constant: -20
+            ),
+            subtitleBottomConstraint
+        ])
+    }
+   
+    @objc private func showAudioTracks() {
+       
+        let audioTracks    = playerViewController.getAudioTracks()
+        let selectedAudio  = playerViewController.getCurrentAudioTrack()
+        let subtitleTracks = playerViewController.getSubtitleTracks()
+        let selectedSub    = playerViewController.getCurrentSubtitleTrack()
+       
+        let alert = UIAlertController(
+            title: "Settings",
+            message: nil,
+            preferredStyle: .actionSheet
+        )
+       
+        // MARK: - Audio section header
+        alert.addAction(UIAlertAction(
+            title: "Audio Tracks",
+            style: .default,
+            handler: nil
+        ))
+       
+        for track in audioTracks {
+            let isSelected = track.id == selectedAudio?.id
+            let title = isSelected ? "✓  \(track.label)" : "    \(track.label)"
+            alert.addAction(UIAlertAction(title: title, style: .default) { _ in
+                self.playerViewController.setAudioTrack(trackId: track.id)
+            })
+        }
+       
+        // MARK: - Subtitle section header
+        alert.addAction(UIAlertAction(
+            title: "Subtitles",
+            style: .default,
+            handler: nil
+        ))
+       
+        // Off option
+        alert.addAction(UIAlertAction(
+            title: selectedSub == nil ? "✓  Off" : "    Off",
+            style: .default
+        ) { _ in
+            self.playerViewController.disableSubtitles()
+        })
+       
+        for track in subtitleTracks {
+            let isSelected = track.id == selectedSub?.id
+            let title = isSelected ? "✓  \(track.label)" : "    \(track.label)"
+            alert.addAction(UIAlertAction(title: title, style: .default) { _ in
+                try? self.playerViewController.setSubtitleTrack(trackId: track.id)
+            })
+        }
+       
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        present(alert, animated: true)
+    }
+   
+    private func setupSkipButton() {
+       
+        guard let overlay = playerViewController.contentOverlayView else { return }
+       
+        skipButton = UIButton(type: .system)
+        skipButton.translatesAutoresizingMaskIntoConstraints = false
+        skipButton.alpha = 0
+        skipButton.isHidden = true
+       
+        skipButton.setTitle("Skip", for: .normal)
+        skipButton.setTitleColor(.white, for: .normal)
+        skipButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 14)
+       
+        skipButton.backgroundColor = UIColor.black.withAlphaComponent(0.7)
+        skipButton.layer.cornerRadius = 18
+        skipButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 16, bottom: 8, right: 16)
+       
+        skipButton.addTarget(self, action: #selector(skipButtonTapped), for: .touchUpInside)
+       
+        overlay.addSubview(skipButton)
+       
+        NSLayoutConstraint.activate([
+            skipButton.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -16),
+            skipButton.bottomAnchor.constraint(equalTo: overlay.bottomAnchor, constant: -140)
+        ])
+    }
+   
+    @objc private func skipButtonTapped() {
+        playerViewController.skipManager?.skipCurrentSegment()
+        hideSkipButton()
+    }
+   
+    private func showSkipButton(title: String) {
+        skipButton.setTitle(title, for: .normal)
+        skipButton.isHidden = false
+       
+        skipButton.superview?.bringSubviewToFront(skipButton)
+       
+        UIView.animate(withDuration: 0.25) {
+            self.skipButton.alpha = 1
+        }
+    }
+   
+    private func hideSkipButton() {
+        UIView.animate(withDuration: 0.25, animations: {
+            self.skipButton.alpha = 0
+        }) { _ in
+            self.skipButton.isHidden = true
+        }
+    }
+   
+    // MARK: - UI Update Helper
+    private func performUIUpdate(_ block: @escaping () -> Void) {
+        DispatchQueue.main.async {
+            UIView.performWithoutAnimation {
+                block()
+            }
+        }
+    }
+   
+    private func setSeekGestureInteraction(_ enabled: Bool) {
+        leftSeekGestureView.isUserInteractionEnabled = enabled
+        rightSeekGestureView.isUserInteractionEnabled = enabled
+    }
+   
+    private func cancelAllControlAnimations() {
+        [
+            playPauseButton,
+            seekBar,
+            prevButton,
+            nextButton,
+            playlistButton,
+            pipButton,
+            fullscreenButton,
+            volumeSlider,
+            muteButton,
+            rateLabel,
+            playerViewController.fastpixForwardButton,
+            playerViewController.fastpixBackwardButton
+        ].forEach {
+            $0?.layer.removeAllAnimations()
+        }
+    }
+   
+    enum SeekDirection {
+        case forward
+        case backward
+    }
+   
+    private func showSeekOverlay(for direction: SeekDirection) {
+        let overlay = (direction == .forward) ? rightSeekOverlay : leftSeekOverlay
+        UIView.animate(withDuration: 0.2, animations: {
+            overlay?.alpha = 1
+        }) { _ in
+            UIView.animate(withDuration: 0.2, delay: 0.2, options: [], animations: {
+                overlay?.alpha = 0
+            })
+        }
+    }
+   
+    private func createSeekOverlay(
+        iconName: String,
+        text: String
+    ) -> UIView {
+       
+        let container = UIView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.layer.cornerRadius = 12
+        container.alpha = 0
+       
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = false
+       
+        let icon = UIImageView()
+        icon.image = UIImage(systemName: iconName)
+        icon.tintColor = .white
+        icon.contentMode = .scaleAspectFit
+       
+        let label = UILabel()
+        label.text = text
+        label.textColor = .white
+        label.font = UIFont.boldSystemFont(ofSize: 14)
+       
+        stack.addArrangedSubview(icon)
+        stack.addArrangedSubview(label)
+        container.addSubview(stack)
+       
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            container.widthAnchor.constraint(equalToConstant: 60),
+            container.heightAnchor.constraint(equalToConstant: 50)
+        ])
+        return container
+    }
+   
+    private func setupSeekVisuals() {
+        guard let overlay = playerViewController.contentOverlayView else { return }
+       
+        let left = createSeekOverlay(iconName: "arrowtriangle.left.fill", text: "-10")
+        let right = createSeekOverlay(iconName: "arrowtriangle.right.fill", text: "+10")
+       
+        overlay.addSubview(left)
+        overlay.addSubview(right)
+       
+        overlay.bringSubviewToFront(left)
+        overlay.bringSubviewToFront(right)
+       
+        NSLayoutConstraint.activate([
+            left.leadingAnchor.constraint(equalTo: overlay.leadingAnchor, constant: 24),
+            left.centerYAnchor.constraint(equalTo: overlay.centerYAnchor),
+            right.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -24),
+            right.centerYAnchor.constraint(equalTo: overlay.centerYAnchor)
+        ])
+       
+        leftSeekOverlay = left
+        rightSeekOverlay = right
+    }
+   
+    private func setupLoadingView() {
+        guard let overlay = playerViewController.contentOverlayView else { return }
+       
+        let loader = UIActivityIndicatorView(style: .large)
+        loader.translatesAutoresizingMaskIntoConstraints = false
+        loader.color = .white
+        loader.hidesWhenStopped = true
+       
+        overlay.addSubview(loader)
+       
+        NSLayoutConstraint.activate([
+            loader.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            loader.centerYAnchor.constraint(equalTo: overlay.centerYAnchor)
+        ])
+        self.loadingView = loader
+    }
+   
+    private func setupSeekGestureZones() {
+       
+        guard let overlay = playerViewController.contentOverlayView else { return }
+       
+        leftSeekGestureView.backgroundColor = .clear
+        rightSeekGestureView.backgroundColor = .clear
+       
+        leftSeekGestureView.translatesAutoresizingMaskIntoConstraints = false
+        rightSeekGestureView.translatesAutoresizingMaskIntoConstraints = false
+       
+       
+        overlay.addSubview(leftSeekGestureView)
+        overlay.addSubview(rightSeekGestureView)
+       
+        let controlsHeight: CGFloat = 120
+       
+        NSLayoutConstraint.activate([
+            // LEFT half
+            leftSeekGestureView.leadingAnchor.constraint(equalTo: overlay.leadingAnchor),
+            leftSeekGestureView.topAnchor.constraint(equalTo: overlay.topAnchor),
+            leftSeekGestureView.bottomAnchor.constraint(
+                equalTo: overlay.bottomAnchor,
+                constant: -controlsHeight
+            ),
+            leftSeekGestureView.widthAnchor.constraint(equalTo: overlay.widthAnchor, multiplier: 0.5),
+           
+            // RIGHT half
+            rightSeekGestureView.trailingAnchor.constraint(equalTo: overlay.trailingAnchor),
+            rightSeekGestureView.topAnchor.constraint(equalTo: overlay.topAnchor),
+            rightSeekGestureView.bottomAnchor.constraint(
+                equalTo: overlay.bottomAnchor,
+                constant: -controlsHeight
+            ),
+            rightSeekGestureView.widthAnchor.constraint(equalTo: overlay.widthAnchor, multiplier: 0.5)
+        ])
+    }
+   
+    private func enableSeekGestures() {
+        playerViewController.enableSeekGestures(
+            on: leftSeekGestureView,
+            forwardSeconds: 10,
+            backwardSeconds: 0
+        )
+       
+        playerViewController.enableSeekGestures(
+            on: rightSeekGestureView,
+            forwardSeconds: 0,
+            backwardSeconds: 10
+        )
+    }
+   
+    private func showLoader() {
+        loadingView?.startAnimating()
+    }
+   
+    private func hideLoader() {
+        loadingView?.stopAnimating()
+    }
+   
+    @objc private func handleSeekGesture(_ notification: Notification) {
+        guard let direction = notification.userInfo?["direction"] as? String else { return }
+       
+        if direction == "forward" {
+            showSeekOverlay(for: .forward)
+        } else {
+            showSeekOverlay(for: .backward)
+        }
+    }
+   
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+       
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSeekGesture(_:)),
+            name: Notification.Name("fastpixSeekGesture"),
+            object: nil
+        )
+       
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            self.playerViewController.setupPiP(parent: self)
+        }
+       
+        guard let popGesture = navigationController?.interactivePopGestureRecognizer,
+              let sliderPan = seekBar.panGestureRecognizer else {
+            return
+        }
+       
+        popGesture.require(toFail: sliderPan)
+       
+        guard let popGesture = navigationController?.interactivePopGestureRecognizer,
+              let sliderPan = seekBar.panGestureRecognizer else { return }
+       
+        popGesture.require(toFail: sliderPan)
+    }
+   
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+       
+        if playerViewController.isPiPActive() {
+            return
+        }
+       
+        if isMovingFromParent || isBeingDismissed {
+            playerViewController.pause()
+            playerViewController.player = nil
+        }
+    }
+   
+    override func viewWillTransition(
+        to size: CGSize,
+        with coordinator: UIViewControllerTransitionCoordinator
+    ) {
+        super.viewWillTransition(to: size, with: coordinator)
+       
+        seekBar.cancelActiveSeekIfNeeded()
+       
+        coordinator.animate(alongsideTransition: { _ in
+            let isLandscape = size.width > size.height
+            self.seekBarBottomConstraint.constant = isLandscape ? -24 : -40
+            self.view.layoutIfNeeded()
+        })
+    }
+   
+    // MARK: - Notifications / Helpers
+    @objc private func appDidBecomeActive() {
+       
+        if let status = playerViewController.player?.timeControlStatus {
+            self.updatePlayPauseButton(for: status)
+        }
+    }
+   
+    @objc private func handleAppWillResignActive() {
+        seekBar.cancelActiveSeekIfNeeded()
+    }
+   
+    @objc private func handleAppDidEnterBackground() {
+        seekBar.cancelActiveSeekIfNeeded()
+    }
+   
+    private func styleSeekButtons() {
+        guard let forward = playerViewController.fastpixForwardButton,
+              let backward = playerViewController.fastpixBackwardButton else {
+            return
+        }
+       
+        forward.addTarget(self,
+                          action: #selector(seekButtonTapped(_:)),
+                          for: .touchUpInside)
+       
+        backward.addTarget(self,
+                           action: #selector(seekButtonTapped(_:)),
+                           for: .touchUpInside)
+       
+        func apply(_ button: UIButton) {
+            button.tintColor = .white
+            button.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+            button.layer.cornerRadius = 24
+            button.clipsToBounds = true
+           
+            // Keep same appearance for all states
+            if #available(iOS 13.0, *) {
+                button.setTitleColor(.white, for: .normal)
+                button.setTitleColor(.white, for: .highlighted)
+                button.setTitleColor(.white, for: .disabled)
+            }
+           
+            if #available(iOS 15.0, *) {
+                button.configurationUpdateHandler = { btn in
+                    var config = btn.configuration ?? .plain()
+                    config.baseForegroundColor = .white
+                    btn.configuration = config
+                }
+            } else {
+                button.adjustsImageWhenHighlighted = false
+                button.adjustsImageWhenDisabled = false
+            }
+        }
+        apply(forward)
+        apply(backward)
+    }
+   
+    @objc private func seekButtonTapped(_ sender: UIButton) {
+        guard !isUserSeeking else { return }
+        sender.animateTapFeedback()
+        userDidInteract()
+    }
+   
+    private func updatePlayPauseButton(for status: AVPlayer.TimeControlStatus) {
+        let iconName = (status == .playing) ? "pause.fill" : "play.fill"
+        let icon = UIImage(systemName: iconName)?.withConfiguration(UIImage.SymbolConfiguration(pointSize: 30, weight: .bold))
+        self.playPauseButton.setImage(icon, for: .normal)
+    }
+   
+    @objc private func fullscreenStateChanged(_ notification: Notification) {
+        guard let isFS = notification.userInfo?["isFullscreen"] as? Bool else { return }
+        guard isFS != fullScreenManager?.isFullscreenMode else { return } // ✅ ADD
+        updateFullscreenIcon(isFS)
+    }
+   
+    @objc private func handlePiPAvailabilityChanged(_ notification: Notification) {
+        if let isAvailable = notification.userInfo?["isAvailable"] as? Bool {
+            DispatchQueue.main.async { [weak self] in
+                self?.pipButton.isEnabled = isAvailable
+            }
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.pipButton.isEnabled = self?.playerViewController.isPiPAvailable() ?? false
+            }
+        }
+    }
+   
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+    }
+   
+    // MARK: - Audio Session
+    private func configureAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [])
+            try AVAudioSession.sharedInstance().setActive(true)
+            NSLog("✅ Audio session configured: Playback will ignore silent mode")
+        } catch {
+            NSLog("❌ Failed to configure AVAudioSession: \(error)")
+        }
+    }
+   
+    func prepareAvPlayerController() {
+       
+        playerViewController.showsPlaybackControls = false    // You have custom controls
+       
+        // 2. Add PlayerViewController's view to your container
+        addChild(playerViewController)
+        playerView.addSubview(playerViewController.view)
+        playerViewController.view.translatesAutoresizingMaskIntoConstraints = false
+        playerViewController.didMove(toParent: self)
+       
+        let normalPlayerViewConstraints = [
+            playerViewController.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
+            playerViewController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 0),
+            playerViewController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: 0),
+            playerViewController.view.heightAnchor.constraint(equalToConstant: 400)
+        ]
+       
+        let fullscreenConstraints = [
+            playerViewController.view.topAnchor.constraint(equalTo: view.topAnchor),
+            playerViewController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            playerViewController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            playerViewController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ]
+       
+        NSLayoutConstraint.activate(normalPlayerViewConstraints)
+        fullScreenManager?.configureConstraints(normal: normalPlayerViewConstraints, fullscreen: fullscreenConstraints)
+    }
+   
+    @objc private func togglePlayerControls() {
+        userDidInteract()
+    }
+   
+    private func userDidInteract() {
+        guard !isUserSeeking else { return }
+    }
+   
+    private func autoHideControls(after delay: TimeInterval = 3.0) {
+        controlsHideWorkItem?.cancel()
+       
+        guard !isUserSeeking else { return } // ✅ already there (good)
+       
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard !self.isUserSeeking else { return }
+        }
+        controlsHideWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+   
+    private func showAllControls(animated: Bool = true) {
+        guard !controlsVisible else {
+            autoHideControls()
+            return
+        }
+       
+        cancelAllControlAnimations()
+       
+        controlsVisible = true
+       
+        let duration = animated ? 0.3 : 0
+        performUIUpdate {
+            UIView.animate(withDuration: duration) {
+                self.playPauseButton.alpha = 1
+                self.seekBar.alpha = 1
+                self.prevButton.alpha = 1
+                self.nextButton.alpha = 1
+                self.playlistButton.alpha = 1
+                self.titleLabel.alpha = 1
+                self.pipButton?.alpha = 1
+                self.fullscreenButton?.alpha = 1
+                self.volumeSlider.alpha = 1
+                self.muteButton.alpha = 1
+                self.rateLabel.alpha = 1
+               
+                if let f = self.playerViewController.fastpixForwardButton,
+                   let b = self.playerViewController.fastpixBackwardButton {
+                    f.alpha = 1
+                    b.alpha = 1
+                    f.isUserInteractionEnabled = true
+                    b.isUserInteractionEnabled = true
+                }
+               
+                self.seekBar.previewView.isHidden = false
+            }
+        }
+        autoHideControls()
+    }
+   
+    private func hideAllControls(animated: Bool = true) {
+       
+        guard controlsVisible else { return }
+       
+        cancelAllControlAnimations()
+       
+        controlsVisible = false
+       
+        let duration = animated ? 0.3 : 0
+        performUIUpdate {
+            UIView.animate(withDuration: duration) {
+                self.playPauseButton.alpha = 0
+                self.seekBar.alpha = 0
+                self.prevButton.alpha = 0
+                self.nextButton.alpha = 0
+                self.playlistButton.alpha = 0
+                self.pipButton?.alpha = 0
+                self.fullscreenButton?.alpha = 0
+                self.volumeSlider.alpha = 0
+                self.muteButton.alpha = 0
+                self.rateLabel.alpha = 0
+               
+                if let f = self.playerViewController.fastpixForwardButton,
+                   let b = self.playerViewController.fastpixBackwardButton {
+                    f.alpha = 0
+                    b.alpha = 0
+                    f.isUserInteractionEnabled = false
+                    b.isUserInteractionEnabled = false
+                }
+               
+                self.seekBar.previewView.isHidden = true
+            }
+        }
+        controlsHideWorkItem?.cancel()
+    }
+   
+    private func isLandscapeMode() -> Bool {
+        if #available(iOS 13.0, *) {
+            let orientation = view.window?.windowScene?.interfaceOrientation
+            return orientation == .landscapeLeft || orientation == .landscapeRight
+        } else {
+            return UIApplication.shared.statusBarOrientation.isLandscape
+        }
+    }
+   
+    // MARK: - Playlist
+    private func setupPlaylistStateObserver() {
+        NotificationCenter.default.addObserver(self, selector: #selector(playlistStateChanged), name: Notification.Name("FastPixPlaylistStateChanged"), object: playerViewController)
+    }
+   
+    @objc private func playlistStateChanged(_ notification: Notification) {
+        self.showLoader()
+        DispatchQueue.main.async {
+            self.resetSubtitleState()
+            self.seekBar.resetBuffer()
+            // 🔹 Clear spritesheet
+            self.playerViewController.clearSpritesheet()
+            self.seekBar.previewView.isHidden = true
+            self.playerViewController.setupSeekManager(delegate: self)
+            self.updateCurrentTitle()
+            self.updateButtonVisibility()
+            self.updatePlayPauseButton(for: self.playerViewController.player?.timeControlStatus ?? .paused)
+           
+            // 2️⃣ ALWAYS reset skip state
+            self.playerViewController.skipManager?.clearSegments()
+            self.hideSkipButton()
+           
+            // 3️⃣ Extract playlist item SAFELY
+            guard let item = notification.object as? FastPixPlaylistItem else {
+                return
+            }
+           
+            if !item.skipSegments.isEmpty {
+                self.playerViewController.skipManager?.setSkipSegments(item.skipSegments)
+            }
+           
+            self.playerViewController.qualityManager?.loadQualityLevels()
+           
+            let previewConfig = FastPixSeekPreviewConfig()
+            self.playerViewController.loadSpritesheet(
+                url: nil,
+                previewEnable: true,
+                config: previewConfig
+            )
+            self.playerViewController.setFallbackMode(.timestamp)
+           
+            // Preload upcoming videos after playlist item changes
+            self.preloadNextVideos()
+            self.precacheUpcomingVideos()
+        }
+    }
+   
+    private func updateCurrentTitle() {
+        if let currentItem = playerViewController.currentPlaylistItem {
+            titleLabel.text = currentItem.title
+        }
+    }
+   
+    private func addCustomControls() {
+        guard let overlay = playerViewController.contentOverlayView else { return }
+       
+        let buttonSize: CGFloat = 50
+       
+        // MARK: Prev Button
+        prevButton = UIButton(type: .system)
+        prevButton.translatesAutoresizingMaskIntoConstraints = false
+       
+        if #available(iOS 15.0, *) {
+            var config = UIButton.Configuration.plain()
+            config.title = ""
+            config.baseForegroundColor = .white
+            config.contentInsets = .zero
+            prevButton.configuration = config
+           
+            prevButton.configurationUpdateHandler = { button in
+                var updated = button.configuration ?? UIButton.Configuration.plain()
+                updated.baseForegroundColor = .white     // keep same for normal/highlighted/disabled
+                button.configuration = updated
+            }
+        } else {
+            prevButton.setTitle("", for: .normal)
+            prevButton.setTitleColor(.white, for: .normal)
+            prevButton.setTitleColor(.white, for: .highlighted)
+            prevButton.setTitleColor(.white, for: .disabled)
+        }
+       
+        prevButton.titleLabel?.font = UIFont.systemFont(ofSize: 16, weight: .bold)
+        prevButton.addTarget(self, action: #selector(prevTapped(_:)), for: .touchUpInside)
+       
+        // MARK: Next Button
+        nextButton = UIButton(type: .system)
+        nextButton.translatesAutoresizingMaskIntoConstraints = false
+       
+        if #available(iOS 15.0, *) {
+            var config = UIButton.Configuration.plain()
+            config.title = ""
+            config.baseForegroundColor = .white
+            config.contentInsets = .zero
+            nextButton.configuration = config
+           
+            nextButton.configurationUpdateHandler = { button in
+                var updated = button.configuration ?? UIButton.Configuration.plain()
+                updated.baseForegroundColor = .white
+                button.configuration = updated
+            }
+        } else {
+            nextButton.setTitle("", for: .normal)
+            nextButton.setTitleColor(.white, for: .normal)
+            nextButton.setTitleColor(.white, for: .highlighted)
+            nextButton.setTitleColor(.white, for: .disabled)
+        }
+       
+        nextButton.titleLabel?.font = UIFont.systemFont(ofSize: 16, weight: .bold)
+        nextButton.addTarget(self, action: #selector(nextTapped(_:)), for: .touchUpInside)
+       
+        // MARK: Playlist Button
+        playlistButton = UIButton(type: .system)
+        playlistButton.translatesAutoresizingMaskIntoConstraints = false
+       
+        if #available(iOS 15.0, *) {
+            var config = UIButton.Configuration.plain()
+            config.title = ""
+            config.baseForegroundColor = .white
+            config.contentInsets = .zero
+            playlistButton.configuration = config
+           
+            playlistButton.configurationUpdateHandler = { button in
+                var updated = button.configuration ?? UIButton.Configuration.plain()
+                updated.baseForegroundColor = .white
+                button.configuration = updated
+            }
+        } else {
+            playlistButton.setTitle("", for: .normal)
+            playlistButton.setTitleColor(.white, for: .normal)
+            playlistButton.setTitleColor(.white, for: .highlighted)
+            playlistButton.setTitleColor(.white, for: .disabled)
+        }
+       
+        playlistButton.titleLabel?.font = UIFont.systemFont(ofSize: 16, weight: .bold)
+        playlistButton.addTarget(self, action: #selector(showPlaylist(_:)), for: .touchUpInside)
+       
+        // Add to overlay
+        overlay.addSubview(prevButton)
+        overlay.addSubview(nextButton)
+        overlay.addSubview(playlistButton)
+       
+        NSLayoutConstraint.activate([
+            prevButton.leadingAnchor.constraint(equalTo: overlay.leadingAnchor, constant: 20),
+            prevButton.bottomAnchor.constraint(equalTo: overlay.bottomAnchor, constant: -70),
+            prevButton.widthAnchor.constraint(equalToConstant: buttonSize),
+            prevButton.heightAnchor.constraint(equalToConstant: buttonSize),
+           
+            nextButton.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -20),
+            nextButton.bottomAnchor.constraint(equalTo: overlay.bottomAnchor, constant: -70),
+            nextButton.widthAnchor.constraint(equalToConstant: buttonSize),
+            nextButton.heightAnchor.constraint(equalToConstant: buttonSize),
+           
+            playlistButton.leadingAnchor.constraint(equalTo: prevButton.trailingAnchor, constant: 16),
+            playlistButton.trailingAnchor.constraint(equalTo: nextButton.leadingAnchor, constant: -16),
+            playlistButton.centerYAnchor.constraint(equalTo: prevButton.centerYAnchor)
+        ])
+       
+    }
+   
+    // MARK: - Helper to style buttons
+    private func styleButton(_ button: UIButton, systemImageName: String, size: CGFloat = 16) {
+        let config = UIImage.SymbolConfiguration(pointSize: size, weight: .medium)
+        let image = UIImage(systemName: systemImageName, withConfiguration: config)
+        button.setImage(image, for: .normal)
+        button.tintColor = .white
+        button.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        button.layer.cornerRadius = 18
+        button.clipsToBounds = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 36),
+            button.heightAnchor.constraint(equalToConstant: 36)
+        ])
+    }
+   
+    // MARK: - Setup Hotstar-style bottom controls
+    private func setupBottomControlsRow() {
+        guard let overlay = playerViewController.contentOverlayView else { return }
+       
+        // Style rate label
+        rateLabel.textColor = .white
+        rateLabel.font = UIFont.boldSystemFont(ofSize: 16)
+        rateLabel.textAlignment = .center
+        rateLabel.setContentHuggingPriority(.required, for: .horizontal)
+        rateLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+       
+        // Style all buttons
+        styleButton(prevButton, systemImageName: "backward.fill")
+        styleButton(nextButton, systemImageName: "forward.fill")
+        styleButton(playlistButton, systemImageName: "play.square.stack.fill")
+        styleButton(muteButton, systemImageName: "speaker.slash.fill")
+       
+        // Rate stack
+        let rateStack = UIStackView(arrangedSubviews: [rateLabel])
+        rateStack.axis = .horizontal
+        rateStack.spacing = 6
+        rateStack.alignment = .center
+       
+        // Bottom controls stack
+        let bottomStack = UIStackView(arrangedSubviews: [
+            prevButton,
+            rateStack,
+            playlistButton,
+            muteButton,
+            audioTrackButton,
+            qualityButton,
+            nextButton
+        ])
+        bottomStack.axis = .horizontal
+        bottomStack.alignment = .center
+        bottomStack.distribution = .equalSpacing
+        bottomStack.spacing = 12
+        bottomStack.translatesAutoresizingMaskIntoConstraints = false
+       
+        // Background view for controls
+        let bottomBackground = UIView()
+        bottomBackground.layer.cornerRadius = 30
+        bottomBackground.translatesAutoresizingMaskIntoConstraints = false
+       
+        overlay.addSubview(bottomBackground)
+        overlay.addSubview(bottomStack)
+       
+        // Constraints
+        NSLayoutConstraint.activate([
+            // Background
+            bottomBackground.leadingAnchor.constraint(equalTo: overlay.leadingAnchor, constant: 15),
+            bottomBackground.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -15),
+            bottomBackground.bottomAnchor.constraint(equalTo: overlay.bottomAnchor, constant: -60),
+            bottomBackground.heightAnchor.constraint(equalToConstant: 60),
+           
+            // Stack
+            bottomStack.leadingAnchor.constraint(equalTo: bottomBackground.leadingAnchor, constant: 10),
+            bottomStack.trailingAnchor.constraint(equalTo: bottomBackground.trailingAnchor, constant: -10),
+            bottomStack.centerYAnchor.constraint(equalTo: bottomBackground.centerYAnchor)
+        ])
+    }
+   
+    private func resetSubtitleState() {
+        audioTrackButton.isHidden = true
+        subtitleLabel.text = ""
+        subtitleLabel.isHidden = true
+    }
+   
+    private func updateSettingsButtonVisibility() {
+        // Small delay to let SDK fully populate track lists
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self = self else { return }
+            let audioTracks = self.playerViewController.getAudioTracks()
+            let subtitleTracks = self.playerViewController.getSubtitleTracks()
+           
+            let hasContent = audioTracks.count > 1 || !subtitleTracks.isEmpty
+            self.audioTrackButton.isHidden = !hasContent
+        }
+    }
+   
+    @objc private func nextTapped(_ sender: UIButton) {
+        sender.animateTapFeedback()
+        userDidInteract()
+       
+        // Check if the next item is already preloaded — consuming it detaches
+        // it from the shadow player so AVFoundation's URL cache can reuse the
+        // buffered data when the SDK loads the same URL via next().
+        let nextIndex = playerViewController.currentPlaylistIndex + 1
+        if nextIndex < playlist.count {
+            let nextId = playlist[nextIndex].playbackId
+            // Consume (detach from shadow player) so cached data is available
+            if preloadManager.consumePreloadedItem(for: nextId) != nil {
+                print("Preloaded item consumed — AVFoundation cache warm for: \(nextId)")
+            }
+        }
+        _ = playerViewController.next()
+       
+        resetSubtitleState()
+        seekBar.resetBuffer()
+        self.playerViewController.clearSpritesheet()
+        self.seekBar.previewView.isHidden = true
+        self.playerViewController.setupSeekManager(delegate: self)
+        updateCurrentTitle()
+        updateButtonVisibility()
+        self.updatePlayPauseButton(for: playerViewController.player?.timeControlStatus ?? .paused)
+        let previewConfig = FastPixSeekPreviewConfig()
+        playerViewController.loadSpritesheet(url: nil, previewEnable: true, config: previewConfig)
+        playerViewController.setFallbackMode(.timestamp)
+        preloadNextVideos()
+        precacheUpcomingVideos()
+    }
+   
+    @objc private func prevTapped(_ sender: UIButton) {
+        sender.animateTapFeedback()
+        userDidInteract()
+        if playerViewController.previous() {
+            resetSubtitleState()
+            seekBar.resetBuffer()
+            self.playerViewController.clearSpritesheet()
+            self.seekBar.previewView.isHidden = true
+            self.playerViewController.setupSeekManager(delegate: self)
+            updateCurrentTitle()
+            updateButtonVisibility()
+            self.updatePlayPauseButton(for: playerViewController.player?.timeControlStatus ?? .paused)
+            let previewConfig = FastPixSeekPreviewConfig()
+            playerViewController.loadSpritesheet(url: nil, previewEnable: true, config: previewConfig)
+            playerViewController.setFallbackMode(.timestamp)
+            // Re-compute which videos to preload from the new position
+            preloadNextVideos()
+            precacheUpcomingVideos()
+        }
+    }
+   
+    @objc private func showPlaylist(_ sender: UIButton) {
+        sender.animateTapFeedback()
+        userDidInteract()
+        guard playerViewController.hasPlaylist else { return }
+       
+        let alert = UIAlertController(title: "Playlist", message: nil, preferredStyle: .actionSheet)
+        let currentIndex = playerViewController.currentPlaylistIndex
+       
+        for index in 0..<playerViewController.playlistCount {
+            if let item = playerViewController.playlistItem(at: index) {
+                let action = UIAlertAction(title: item.title, style: .default) { _ in
+                    if index != currentIndex {
+                        self.resetSubtitleState()
+                        self.playerViewController.jumpTo(index: index)
+                        self.seekBar.resetBuffer()
+                        self.playerViewController.clearSpritesheet()
+                        self.seekBar.previewView.isHidden = true
+                        self.playerViewController.setupSeekManager(delegate: self)
+                        self.updateCurrentTitle()
+                        self.updateButtonVisibility()
+                        self.updatePlayPauseButton(for: self.playerViewController.player?.timeControlStatus ?? .paused)
+                        let previewConfig = FastPixSeekPreviewConfig()
+                        self.playerViewController.loadSpritesheet(
+                            url: nil,
+                            previewEnable: true,
+                            config: previewConfig
+                        )
+                        self.playerViewController.setFallbackMode(.timestamp)
+                    }
+                }
+                alert.addAction(action)
+            }
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        present(alert, animated: true)
+    }
+   
+    private func updateButtonVisibility() {
+        playerViewController.updatePlaylistButtonVisibility(prevButton: prevButton, nextButton: nextButton)
+    }
+   
+    private func setupPlayPauseButton() {
+        guard let overlay = playerViewController.contentOverlayView else { return }
+       
+        playPauseButton = UIButton(type: .system)
+        playPauseButton.translatesAutoresizingMaskIntoConstraints = false
+       
+        // Base configuration
+        if #available(iOS 15.0, *) {
+            var config = UIButton.Configuration.plain()
+            config.background.cornerRadius = 32
+            config.baseBackgroundColor = UIColor.black.withAlphaComponent(0.55)
+            config.baseForegroundColor = .white
+           
+            // Initial image
+            let playIcon = UIImage(systemName: "pause.fill")?.withConfiguration(
+                UIImage.SymbolConfiguration(pointSize: 30, weight: .bold)
+            )
+            config.image = playIcon
+           
+            playPauseButton.configuration = config
+           
+            // Keep same look for all states (no dim on highlight/disabled)
+            playPauseButton.configurationUpdateHandler = { button in
+                var updated = button.configuration ?? UIButton.Configuration.plain()
+                updated.baseBackgroundColor = UIColor.black.withAlphaComponent(0.55)
+                updated.baseForegroundColor = .white      // same tint for .normal/.highlighted/.disabled
+                button.configuration = updated
+            }
+        } else {
+            playPauseButton.tintColor = .white
+            playPauseButton.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+            playPauseButton.layer.cornerRadius = 32
+            playPauseButton.clipsToBounds = true
+           
+            let playIcon = UIImage(systemName: "pause.fill")?.withConfiguration(
+                UIImage.SymbolConfiguration(pointSize: 30, weight: .bold)
+            )
+            playPauseButton.setImage(playIcon, for: .normal)
+        }
+       
+        playPauseButton.addTarget(
+            self,
+            action: #selector(playPauseTapped(_:)),
+            for: .touchUpInside
+        )
+       
+        overlay.addSubview(playPauseButton)
+        NSLayoutConstraint.activate([
+            playPauseButton.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            playPauseButton.centerYAnchor.constraint(equalTo: overlay.centerYAnchor),
+            playPauseButton.widthAnchor.constraint(equalToConstant: 64),
+            playPauseButton.heightAnchor.constraint(equalToConstant: 64)
+        ])
+    }
+   
+    @objc private func playPauseTapped(_ sender: UIButton) {
+        guard !isUserSeeking else { return }
+        sender.animateTapFeedback()
+        userDidInteract()
+        playerViewController.togglePlayPause()
+    }
+   
+    private func setControlsInteractionEnabled(_ enabled: Bool) {
+        playPauseButton.isUserInteractionEnabled = enabled
+        prevButton.isUserInteractionEnabled = enabled
+        nextButton.isUserInteractionEnabled = enabled
+        playlistButton.isUserInteractionEnabled = enabled
+        if let f = self.playerViewController.fastpixForwardButton,
+           let b = self.playerViewController.fastpixBackwardButton {
+            f.isUserInteractionEnabled = enabled
+            b.isUserInteractionEnabled = enabled
+        }
+        fullscreenButton.isUserInteractionEnabled = enabled
+        pipButton?.isUserInteractionEnabled = enabled
+       
+        // FastPix seek buttons
+        playerViewController.fastpixForwardButton?.isUserInteractionEnabled = enabled
+        playerViewController.fastpixBackwardButton?.isUserInteractionEnabled = enabled
+    }
+   
+    private func setupSeekBar() {
+       
+        guard let overlay = playerViewController.contentOverlayView else { return }
+       
+        seekBar.translatesAutoresizingMaskIntoConstraints = false
+        seekBar.layer.cornerRadius = 3
+        seekBar.clipsToBounds = true
+       
+        overlay.addSubview(seekBar)
+       
+        seekBarBottomConstraint = seekBar.bottomAnchor.constraint(
+            equalTo: overlay.bottomAnchor,
+            constant: -32  // portrait default
+        )
+       
+        NSLayoutConstraint.activate([
+            seekBar.leadingAnchor.constraint(equalTo: overlay.leadingAnchor, constant: 16),
+            seekBar.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -16),
+            seekBar.heightAnchor.constraint(equalToConstant: 28),
+            seekBarBottomConstraint
+        ])
+       
+        // Preview lives in the stable player view
+        playerViewController.view.addSubview(seekBar.previewView)
+        playerViewController.view.bringSubviewToFront(seekBar.previewView)
+       
+        // Give it an initial size so layout math works
+        seekBar.previewView.frame = CGRect(x: 0, y: 0, width: 160, height: 100)
+        seekBar.previewView.isHidden = true
+       
+        seekBar.onSeekStart = { [weak self] time in
+            guard let self else { return }
+            self.isUserSeeking = true
+            self.controlsHideWorkItem?.cancel()
+            //            self.setControlsInteractionEnabled(false)
+            seekBar.isUserInteractionEnabled = true
+            playPauseButton.isEnabled = true
+            prevButton.isEnabled = true
+            nextButton.isEnabled = true
+           
+            if let f = self.playerViewController.fastpixForwardButton,
+               let b = self.playerViewController.fastpixBackwardButton {
+                f.isUserInteractionEnabled = false
+                b.isUserInteractionEnabled = false
+            }
+            self.playerViewController.seekManager?.cancelSeekIfNeeded()
+        }
+       
+        seekBar.onSeekEnd = { [weak self] time in
+            guard let self else { return }
+            self.playerViewController.seek(to: time)
+            self.isUserSeeking = false
+            self.setControlsInteractionEnabled(true)
+            if let f = self.playerViewController.fastpixForwardButton,
+               let b = self.playerViewController.fastpixBackwardButton {
+                f.isUserInteractionEnabled = true
+                b.isUserInteractionEnabled = true
+            }
+            self.autoHideControls()
+            self.seekBar.previewView.imageView.image = nil
+            self.seekBar.previewView.label.text = ""
+            self.seekBar.previewView.isHidden = true
+        }
+       
+        seekBar.onPreviewScrub = { [weak self] time in
+            self?.updateSpritesheetPreview(at: time)
+        }
+       
+        seekBar.onPreviewVisibilityChanged = { [weak self] visible, time in
+            if visible {
+                self?.updateSpritesheetPreview(at: time)
+            }
+        }
+    }
+   
+    private func updateSpritesheetPreview(at time: TimeInterval) {
+        let result = playerViewController.fastpixThumbnailForPreview(at: time)
+        seekBar.updatePreviewThumbnail(result.image, time: time, useTimestamp: result.useTimestamp)
+    }
+   
+    // MARK: - Fullscreen
+    private func setupFullscreenButton() {
+        fullscreenButton = UIButton(type: .system)
+        fullscreenButton.translatesAutoresizingMaskIntoConstraints = false
+        fullscreenButton.tintColor = .white
+       
+        let icon = UIImage(systemName: "arrow.up.left.and.arrow.down.right")?.withConfiguration(UIImage.SymbolConfiguration(pointSize: 22, weight: .bold))
+        fullscreenButton.setImage(icon, for: .normal)
+        fullscreenButton.addTarget(self, action: #selector(fullscreenTapped), for: .touchUpInside)
+        playerView.addSubview(fullscreenButton)
+       
+        NSLayoutConstraint.activate([
+            fullscreenButton.leadingAnchor.constraint(equalTo: playerView.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            fullscreenButton.topAnchor.constraint(equalTo: playerView.safeAreaLayoutGuide.topAnchor, constant: 10),
+            fullscreenButton.widthAnchor.constraint(equalToConstant: 20),
+            fullscreenButton.heightAnchor.constraint(equalToConstant: 20)
+        ])
+    }
+   
+    @objc func fullscreenTapped() {
+        userDidInteract()
+        fullScreenManager?.toggleFullscreen()
+        updateFullscreenIcon(fullScreenManager?.isFullscreenMode ?? false)
+    }
+   
+    private func updateFullscreenIcon(_ isFullscreen: Bool) {
+        let iconName = isFullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
+        let icon = UIImage(systemName: iconName)?.withConfiguration(UIImage.SymbolConfiguration(pointSize: 22, weight: .bold))
+        if let button = playerView.subviews.first(where: { ($0 as? UIButton)?.actions(forTarget: self, forControlEvent: .touchUpInside)?.contains("fullscreenTapped") == true }) as? UIButton {
+            button.setImage(icon, for: .normal)
+        }
+    }
+   
+    // MARK: - PiP (SDK-only)
+    private func setupPiPButton() {
+        pipButton = UIButton(type: .system)
+        pipButton.translatesAutoresizingMaskIntoConstraints = false
+        pipButton.tintColor = .white
+        pipButton.setImage(UIImage(systemName: "pip"), for: .normal)
+        //        pipButton.addTarget(self, action: #selector(pipTapped), for: .touchUpInside)
+        pipButton.addTarget(self, action: #selector(pipTapped(_:)), for: .touchUpInside)
+        pipButton.accessibilityIdentifier = "pipButton"
+       
+        if playerViewController.enablePiP == false{
+            pipButton.isHidden = true
+        } else {
+            pipButton.isHidden = false
+        }
+        playerView.addSubview(pipButton)
+       
+        NSLayoutConstraint.activate([
+            pipButton.trailingAnchor.constraint(equalTo: playerView.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            pipButton.topAnchor.constraint(equalTo: playerView.safeAreaLayoutGuide.topAnchor, constant: 10),
+            pipButton.widthAnchor.constraint(equalToConstant: 25),
+            pipButton.heightAnchor.constraint(equalToConstant: 25)
+        ])
+        view.bringSubviewToFront(pipButton)
+    }
+   
+    @objc private func pipTapped(_ sender: UIButton) {
+        sender.animateTapFeedback()
+        userDidInteract()
+        playerViewController.togglePiP()
+    }
+   
+    @objc private func handlePlaybackStalledUI() {
+        showLoader()
+        if loadingView == nil {
+            let indicator = UIActivityIndicatorView(style: .large)
+            indicator.translatesAutoresizingMaskIntoConstraints = false
+            indicator.color = .white
+            playerView.addSubview(indicator)
+            NSLayoutConstraint.activate([
+                indicator.centerXAnchor.constraint(equalTo: playerView.centerXAnchor),
+                indicator.centerYAnchor.constraint(equalTo: playerView.centerYAnchor)
+            ])
+            loadingView = indicator
+        }
+        loadingView?.startAnimating()
+       
+        seekBar.isUserInteractionEnabled = false
+        playPauseButton.isEnabled = false
+        prevButton.isEnabled = false
+        nextButton.isEnabled = false
+    }
+   
+    @objc private func handlePlaybackResumedUI() {
+        hideLoader()
+        loadingView?.stopAnimating()
+        seekBar.isUserInteractionEnabled = true
+        playPauseButton.isEnabled = true
+        prevButton.isEnabled = true
+        nextButton.isEnabled = true
+    }
+   
+    @objc private func handlePiPStateChanged(_ notification: Notification) {
+        guard let isActive = notification.userInfo?["isActive"] as? Bool else { return }
+       
+        DispatchQueue.main.async {
+            if isActive == true {
+                self.isPiPForegroundMode = false
+                guard self.pipBlurView == nil else { return }
+               
+                // Blur background
+                let blurEffect = UIBlurEffect(style: .dark)
+                let blurView = UIVisualEffectView(effect: blurEffect)
+                blurView.translatesAutoresizingMaskIntoConstraints = false
+               
+                // Centered stack: icon + text
+                let stack = UIStackView()
+                stack.axis = .vertical
+                stack.alignment = .center
+                stack.translatesAutoresizingMaskIntoConstraints = false
+               
+                let iconView = UIImageView()
+                iconView.translatesAutoresizingMaskIntoConstraints = false
+                iconView.tintColor = .gray
+                iconView.contentMode = .scaleAspectFit
+                iconView.image = UIImage(systemName: "pip")?.withConfiguration(
+                    UIImage.SymbolConfiguration(pointSize: 150, weight: .regular)
+                )
+                iconView.setContentHuggingPriority(.required, for: .vertical)
+               
+                let label = UILabel()
+                label.translatesAutoresizingMaskIntoConstraints = false
+                label.textColor = .gray
+                label.font = UIFont.systemFont(ofSize: 10, weight: .regular)
+                label.numberOfLines = 2
+                label.text = "This video is playing in Picture in Picture"
+               
+                stack.addArrangedSubview(iconView)
+                stack.addArrangedSubview(label)
+               
+                blurView.contentView.addSubview(stack)
+               
+                NSLayoutConstraint.activate([
+                    stack.centerXAnchor.constraint(equalTo: blurView.contentView.centerXAnchor),
+                    stack.centerYAnchor.constraint(equalTo: blurView.contentView.centerYAnchor)
+                ])
+               
+                if let overlay = self.playerViewController.contentOverlayView {
+                    self.playerViewController.view.insertSubview(blurView, belowSubview: overlay)
+                } else {
+                    self.playerViewController.view.addSubview(blurView)
+                }
+               
+                NSLayoutConstraint.activate([
+                    blurView.topAnchor.constraint(equalTo: self.playerViewController.view.topAnchor),
+                    blurView.bottomAnchor.constraint(equalTo: self.playerViewController.view.bottomAnchor),
+                    blurView.leadingAnchor.constraint(equalTo: self.playerViewController.view.leadingAnchor),
+                    blurView.trailingAnchor.constraint(equalTo: self.playerViewController.view.trailingAnchor)
+                ])
+               
+                self.pipBlurView = blurView
+            } else {
+                self.isPiPForegroundMode = false
+                self.pipBlurView?.removeFromSuperview()
+                self.pipBlurView = nil
+            }
+        }
+    }
+   
+    private func setupVolumeControls() {
+        guard let overlay = playerViewController.contentOverlayView else { return }
+       
+        // MARK: - Slider
+        volumeSlider = UISlider()
+        volumeSlider.translatesAutoresizingMaskIntoConstraints = false
+        volumeSlider.minimumValue = 0.0
+        volumeSlider.maximumValue = 1.0
+        volumeSlider.value = playerViewController.getCurrentVolume()
+        volumeSlider.tintColor = .white
+       
+        volumeSlider.alpha = 0
+        volumeSlider.isHidden = true
+       
+        // 🔄 Rotate to vertical
+        volumeSlider.transform = CGAffineTransform(rotationAngle: -.pi / 2)
+       
+        volumeSlider.addTarget(
+            self,
+            action: #selector(volumeSliderChanged(_:)),
+            for: .valueChanged
+        )
+       
+        // MARK: - Mute Button
+        muteButton = UIButton(type: .system)
+        muteButton.translatesAutoresizingMaskIntoConstraints = false
+        muteButton.tintColor = .white
+        let currentVolume = playerViewController.getCurrentVolume()
+        volumeSlider.value = currentVolume
+        updateMuteIcon(isMuted: currentVolume == 0)
+       
+        muteButton.addTarget(
+            self,
+            action: #selector(muteTapped(_:)),
+            for: .touchUpInside
+        )
+       
+        overlay.addSubview(volumeSlider)
+        overlay.addSubview(muteButton)
+       
+        NSLayoutConstraint.activate([
+            muteButton.widthAnchor.constraint(equalToConstant: 70),
+            muteButton.heightAnchor.constraint(equalToConstant: 30),
+           
+            volumeSlider.leadingAnchor.constraint(equalTo: overlay.leadingAnchor, constant: 16),
+            volumeSlider.centerYAnchor.constraint(equalTo: overlay.centerYAnchor),
+           
+            volumeSlider.widthAnchor.constraint(equalToConstant: 80),
+            volumeSlider.heightAnchor.constraint(equalToConstant: 30)
+           
+        ])
+    }
+   
+    @objc private func volumeSliderChanged(_ sender: UISlider) {
+        playerViewController.setVolume(sender.value)
+        updateMuteIcon(isMuted: sender.value == 0)
+        userDidInteract()
+    }
+   
+    @objc private func muteTapped(_ sender: UIButton) {
+        sender.animateTapFeedback()
+        playerViewController.toggleMute()
+       
+        let isMuted = playerViewController.isMuted()
+       
+        volumeSlider.value = isMuted ? 0 : playerViewController.getCurrentVolume()
+       
+        userDidInteract()
+    }
+   
+    private func updateMuteIcon(isMuted: Bool) {
+        let iconName = isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"
+        let icon = UIImage(systemName: iconName)
+        muteButton.setImage(icon, for: .normal)
+    }
+   
+    private func setupPlaybackRateControls() {
+       
+        guard let overlay = playerViewController.contentOverlayView else { return }
+       
+        // Label
+        rateLabel = UILabel()
+        rateLabel.translatesAutoresizingMaskIntoConstraints = false
+        rateLabel.textColor = .white
+        rateLabel.font = UIFont.boldSystemFont(ofSize: 14)
+        rateLabel.text = "1.0x"
+       
+        let tap = UITapGestureRecognizer(target: self, action: #selector(showPlaybackRateSheet))
+        rateLabel.isUserInteractionEnabled = true
+        rateLabel.addGestureRecognizer(tap)
+       
+        let stack = UIStackView(arrangedSubviews: [rateLabel])
+        stack.axis = .horizontal
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        overlay.addSubview(stack)
+       
+        NSLayoutConstraint.activate([
+            stack.trailingAnchor.constraint(equalTo: muteButton.leadingAnchor, constant: -20),
+            stack.bottomAnchor.constraint(equalTo: overlay.bottomAnchor, constant: -70)
+        ])
+    }
+   
+    @objc private func incrementRate() {
+        playerViewController.incrementPlaybackRate()
+        updateRateLabel()
+    }
+   
+    @objc private func decrementRate() {
+        playerViewController.decrementPlaybackRate()
+        updateRateLabel()
+    }
+   
+    private func updateRateLabel() {
+        let rate = playerViewController.currentPlaybackRate()
+        rateLabel.text = "\(rate)x"
+    }
+   
+    private func playbackRateEnum(from value: Float)
+    -> FastPixPlaybackRateManager.PlaybackRate {
+       
+        switch value {
+        case 0.25: return .x025
+        case 0.5: return .x05
+        case 0.75: return .x075
+        case 1.0: return .x1
+        case 1.25: return .x125
+        case 1.5: return .x15
+        case 1.75: return .x175
+        case 2.0: return .x2
+        default: return .x1
+        }
+    }
+   
+    @objc private func showPlaybackRateSheet() {
+       
+        let speeds: [Float] = [0.25,0.5,0.75,1.0,1.25,1.5,1.75,2.0]
+       
+        let alert = UIAlertController(
+            title: "Playback Speed",
+            message: nil,
+            preferredStyle: .actionSheet
+        )
+       
+        for speed in speeds {
+            alert.addAction(UIAlertAction(title: "\(speed)x", style: .default) { _ in
+               
+                let rateEnum = self.playbackRateEnum(from: speed)
+                self.playerViewController.setPlaybackSpeed(rateEnum)
+                self.updateRateLabel()
+               
+            })
+        }
+       
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+       
+        present(alert, animated: true)
+    }
+   
+    private func showVolumeSliderTemporarily() {
+       
+        volumeSlider.isHidden = false
+       
+        UIView.animate(withDuration: 0.2) {
+            self.volumeSlider.alpha = 1
+        }
+       
+        // Auto hide after 2 sec
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            UIView.animate(withDuration: 0.2) {
+                self.volumeSlider.alpha = 0
+            } completion: { _ in
+                self.volumeSlider.isHidden = true
+            }
+        }
+    }
+   
+    @objc private func showSubtitleTracks() {
+       
+        let tracks = playerViewController.getSubtitleTracks()
+        let selectedTrack = playerViewController.getCurrentSubtitleTrack()
+       
+        let alert = UIAlertController(
+            title: "Subtitles",
+            message: nil,
+            preferredStyle: .actionSheet
+        )
+       
+        // OFF option
+        let offAction = UIAlertAction(
+            title: selectedTrack == nil ? "✓ Off" : "Off",
+            style: .default
+        ) { _ in
+            self.playerViewController.disableSubtitles()
+        }
+       
+        alert.addAction(offAction)
+       
+        for track in tracks {
+           
+            let isSelected = track.id == selectedTrack?.id
+            let title = isSelected ? "✓ \(track.label)" : track.label
+           
+            let action = UIAlertAction(title: title, style: .default) { _ in
+                self.playerViewController.setSubtitleTrack(trackId: track.id)
+            }
+           
+            alert.addAction(action)
+        }
+       
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+       
+        present(alert, animated: true)
+    }
+   
+    deinit {
+        controlsHideWorkItem?.cancel()
+        NotificationCenter.default.removeObserver(self)
+        playerViewController.cleanupPlaylist()
+        seekManager?.removeBufferObserver()
+        // Stop all in-flight preloads and precache tasks
+        preloadManager.clearAll()
+        precacheManager.stopAllPrecaching()
+    }
+}
+
+// MARK: - FastPixSeekDelegate
+extension VideoPlayerViewController: FastPixSeekDelegate {
+   
+    func onBufferedTimeUpdate(loaded: TimeInterval, duration: TimeInterval) {
+        seekBar.updateBuffer(loaded: loaded, duration: duration)
+    }
+   
+    func onTimeUpdate(currentTime: TimeInterval, duration: TimeInterval) {
+        seekBar.updateTime(current: currentTime, duration: duration)
+    }
+   
+    func onSeekStart(at time: TimeInterval) {}
+   
+    func onSeekEnd(at time: TimeInterval) {
+        let duration = playerViewController.getDuration()
+        seekBar.updateTime(current: time, duration: duration)
+    }
+}
+
+extension UIButton {
+   
+    func animateTapFeedback() {
+        let originalColor = backgroundColor
+       
+        UIView.animate(withDuration: 0.08, animations: {
+            self.backgroundColor = UIColor.white.withAlphaComponent(0.2)
+            self.transform = CGAffineTransform(scaleX: 0.92, y: 0.92)
+        }) { _ in
+            UIView.animate(withDuration: 0.12) {
+                self.backgroundColor = originalColor
+                self.transform = .identity
+            }
+        }
+    }
+}
+
+extension VideoPlayerViewController: UIGestureRecognizerDelegate {
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldReceive touch: UITouch
+    ) -> Bool {
+        return !(touch.view is UIControl)
+    }
+}
+
+extension VideoPlayerViewController: FastPixVolumeDelegate {
+   
+    func fastPixVolumeDidChange(
+        volume: Float,
+        isMuted: Bool,
+        isSystemChange: Bool
+    ) {
+        let source = isSystemChange ? "System (Hardware Buttons)" : "App (UI / SDK Call)"
+        let muteState = isMuted ? "Muted" : "Unmuted"
+       
+        DispatchQueue.main.async {
+            self.volumeSlider.value = volume
+            self.updateMuteIcon(isMuted: isMuted)
+           
+            if isSystemChange {
+                self.showVolumeSliderTemporarily()
+            }
+        }
+    }
+}
+
+extension VideoPlayerViewController: FastPixSkipDelegate {
+   
+    func onSkipVisibilityChanged(
+        isVisible: Bool,
+        segment: FastPixPlayerSDKTest.SkipSegment?
+    ) {
+       
+        guard let segment = segment else {
+            hideSkipButton()
+            return
+        }
+       
+        if isVisible {
+            let title: String
+            switch segment.type {
+            case .intro:
+                title = "Skip Intro"
+            case .credits:
+                title = "Skip Credits"
+            case .song:
+                title = "Skip Song"
+            }
+           
+            showSkipButton(title: title)
+        } else {
+            hideSkipButton()
+        }
+    }
+   
+    func onSkipStarted() {
+        skipButton.isEnabled = false
+        skipButton.alpha = 0.6
+    }
+   
+    func onSkipCompleted() {
+        skipButton.isEnabled = true
+        hideSkipButton()
+    }
+   
+    func onSkipFailed(error: FastPixPlayerSDKTest.SkipError) {
+        skipButton.isEnabled = true
+        hideSkipButton()
+    }
+}
+
+extension VideoPlayerViewController: FastPixAudioTrackDelegate {
+   
+    func onAudioTracksUpdated(tracks: [FastPixPlayerSDKTest.AudioTrack]) {
+        updateSettingsButtonVisibility()
+    }
+   
+    func onAudioTrackChange(selectedTrack: FastPixPlayerSDKTest.AudioTrack) {
+    }
+   
+    func onAudioTrackFailed(error: FastPixPlayerSDKTest.AudioTrackError) {
+    }
+   
+    func onAudioTrackSwitching(isSwitching: Bool) {
+       
+    }
+}
+
+extension VideoPlayerViewController: FastPixSubtitleTrackDelegate {
+   
+    func onSubtitlesLoaded(tracks: [SubtitleTrack]) {
+        updateSettingsButtonVisibility()
+    }
+   
+    func onSubtitleChange(track: SubtitleTrack?) {
+    }
+   
+    func onSubtitlesLoadedFailed(error: SubtitleTrackError) {
+    }
+   
+    func onSubtitleCueChange(information: SubtitleRenderInfo) {
+        DispatchQueue.main.async {
+            if information.text.isEmpty {
+                self.subtitleLabel.text = ""
+                self.subtitleLabel.isHidden = true
+            } else {
+                self.subtitleLabel.text = information.text
+                self.subtitleLabel.isHidden = false
+                // Always stay on top of other player subviews
+                self.playerViewController.view.bringSubviewToFront(self.subtitleLabel)
+            }
+        }
+    }
+}
+
+extension VideoPlayerViewController: FastPixQualityDelegate {
+   
+    func onQualitySwitching(isSwitching: Bool) {
+       
+    }
+   
+    func onQualityLevelsUpdated(levels: [QualityLevel]) {
+        print("Quality levels loaded: \(levels.count)")
+    }
+   
+    func onQualityLevelChanged(selectedLevel level: QualityLevel) {
+        print("Switched to: \(level.label)")
+    }
+   
+    func onQualityLevelFailed(error: QualityLevelError) {
+        print("Quality error: \(error)")
+    }
+}
+
+// MARK: - Preload & Precache Helpers
+
+extension VideoPlayerViewController {
+   
+    /// Preloads the next 2 videos after the currently playing item.
+    /// Call this whenever the current playlist position changes.
+    private func preloadNextVideos() {
+        let currentIndex = playerViewController.currentPlaylistIndex
+        let currentId = currentIndex < playlist.count ? playlist[currentIndex].playbackId : ""
+       
+        let upcoming = playlist
+            .enumerated()
+            .filter { $0.offset > currentIndex }
+            .prefix(2)
+            .map { $0.element }
+            .filter {
+                // Skip if already loading, ready, or currently playing
+                let status = preloadManager.preloadStatus(forVideo: $0.playbackId)
+                switch status {
+                case .idle: return $0.playbackId != currentId
+                default:    return false
+                }
+            }
+       
+        let itemsToPreload: [(id: String, item: AVPlayerItem)] = upcoming.compactMap { playlistItem -> (id: String, item: AVPlayerItem)? in
+            guard let url = buildPlaybackURL(for: playlistItem) else { return nil }
+            let playerItem = AVPlayerItem(url: url)
+            return (id: playlistItem.playbackId, item: playerItem)
+        }
+       
+        guard !itemsToPreload.isEmpty else { return }
+        preloadManager.preload(items: itemsToPreload)
+        print("Queued preload for \(itemsToPreload.map(\.id))")
+    }
+   
+    /// Precaches HLS segments to disk for the current + next video.
+    /// Skips DRM items (token-protected) since their segments are encrypted.
+    private func precacheUpcomingVideos() {
+        let currentIndex = playerViewController.currentPlaylistIndex
+        let upcoming = playlist
+            .enumerated()
+            .filter { $0.offset >= currentIndex }
+            .prefix(2)
+            .map { $0.element }
+       
+        for item in upcoming {
+            // Skip DRM-protected content — encrypted segments cannot be cached
+            guard item.drmToken.isEmpty else {
+                print("Skipping precache for DRM item: \(item.playbackId)")
+                continue
+            }
+           
+            let host = item.customDomain.isEmpty == false
+            ? item.customDomain
+            : "stream.fastpix.com"
+           
+            var urlString = "https://\(host)/\(item.playbackId).m3u8"
+            if !item.token.isEmpty {
+                urlString += "?token=\(item.token)"
+            }
+           
+            guard let url = URL(string: urlString) else { continue }
+            precacheManager.startPrecaching(url: url)
+            print("Precaching: \(item.playbackId)")
+        }
+    }
+   
+    /// Builds the correct PlaybackOptions for a given playlist item.
+    private func buildPlaybackOptions(for item: FastPixPlaylistItem) -> PlaybackOptions {
+        let hasDomain = !(item.customDomain.isEmpty ?? true)
+        let hasToken  = !item.token.isEmpty
+       
+        if hasToken && hasDomain {
+            return PlaybackOptions(customDomain: item.customDomain, playbackToken: item.token)
+        } else if hasToken {
+            return PlaybackOptions(playbackToken: item.token)
+        } else if hasDomain {
+            return PlaybackOptions(customDomain: item.customDomain)
+        } else {
+            return PlaybackOptions()
+        }
+    }
+   
+    /// Builds the HLS stream URL for a playlist item directly,
+    /// without relying on the SDK's internal AVPlayerItem extensions.
+    private func buildPlaybackURL(for item: FastPixPlaylistItem) -> URL? {
+        let host = (item.customDomain.isEmpty == false) ? item.customDomain : "stream.fastpix.com"
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host   = host
+        components.path   = "/\(item.playbackId).m3u8"
+       
+        var queryItems: [URLQueryItem] = []
+        if !item.token.isEmpty {
+            queryItems.append(URLQueryItem(name: "token", value: item.token))
+        }
+        if !queryItems.isEmpty {
+            components.queryItems = queryItems
+        }
+        return components.url
+    }
+}
+
+// MARK: - PreloadManagerDelegate
+
+extension VideoPlayerViewController: PreloadManagerDelegate {
+   
+    func videoPreloadDidStart(forId id: String) {
+        print("Preload started for: \(id)")
+    }
+   
+    func videoPreloadDidBecomeReady(forId id: String) {
+        print("Preload ready — instant playback available for: \(id)")
+    }
+   
+    func videoPreloadDidFail(forId id: String, error: Error?) {
+        print("Preload failed for \(id): \(error?.localizedDescription ?? "unknown error")")
+    }
+   
+    func videoPreloadDidCancel(forId id: String) {
+        print("Preload cancelled for: \(id)")
+    }
+   
+    func videoPreloadDidAutoAdvance(toId id: String) {
+        print("Auto-advance consumed preloaded item: \(id)")
+    }
+}
+
+// MARK: - PrecacheManagerDelegate
+
+extension VideoPlayerViewController: PrecacheManagerDelegate {
+   
+    func videoCacheDidHit(url: URL) {
+        print("Cache HIT — served from disk: \(url.lastPathComponent)")
+    }
+   
+    func videoCacheDidMiss(url: URL) {
+        print("Cache MISS — downloading and caching: \(url.lastPathComponent)")
+    }
+}

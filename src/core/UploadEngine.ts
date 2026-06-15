@@ -1,28 +1,31 @@
 /**
- * UploadEngine  — Phase 2
+ * UploadEngine — Phase 2 (axios) — patched: slice-based chunk reading
  *
- * Handles the low-level mechanics of uploading a single file in sequential
- * chunks to a FastPix resumable upload endpoint.
+ * ── BACKGROUND ───────────────────────────────────────────────────────────
+ * RNBlobUtil.fs.readStream(path, 'base64', bufferSize, position):
+ *   - `bufferSize` controls bytes delivered PER onData event.
+ *   - It does NOT cap the TOTAL bytes read — the stream reads to EOF
+ *     regardless, and there is no working close()/pause() to stop it early
+ *     (confirmed at runtime on both platforms — neither method exists on
+ *     the returned stream object).
  *
- * Responsibilities:
- *   - Reading byte-range slices from disk via react-native-blob-util
- *   - Building correct HTTP headers (Content-Range, Content-Type)
- *   - Sending chunks sequentially with axios
- *   - Exponential back-off retry on transient failures
- *   - Surfacing progress, chunkAttempt, chunkAttemptFailure, and
- *     chunkSuccess events to the parent FastPixUpload class
+ * For a 57MB file with 5MB chunks, every chunk's stream kept reading to
+ * EOF in the background after the promise resolved, leaking tens of MB
+ * of orphaned base64 strings per chunk. By chunk 3, ~200MB+ of dead
+ * strings were alive simultaneously, exhausting memory and hanging the
+ * upload indefinitely.
  *
- * What this class does NOT do:
- *   - State machine management  →  FastPixUpload
- *   - Network connectivity      →  NetworkMonitor
- *   - Event fan-out             →  TypedEventEmitter (owned by FastPixUpload)
+ * ── FIX ──────────────────────────────────────────────────────────────────
+ * Replace readStream entirely with RNBlobUtil.fs.slice(path, destPath,
+ * start, end), which creates a small TEMP FILE containing exactly the
+ * requested byte range. We then readFile() that temp file (which is only
+ * ~5MB, never the whole source file) and delete it immediately after.
  *
- * react-native-blob-util file reading strategy:
- *   We use `readStream` with bufferSize = chunkSizeBytes and a start
- *   offset so only one chunk worth of bytes is loaded into memory at
- *   a time, keeping the footprint flat for very large video files.
- *   The stream emits base64-encoded data events which we accumulate
- *   and then decode to a Uint8Array for the axios PUT body.
+ * This guarantees:
+ *   - Exactly chunkByteLength bytes are ever read into memory.
+ *   - No lingering streams, no overreading, no leaks.
+ *   - Memory usage stays flat regardless of source file size.
+ * ─────────────────────────────────────────────────────────────────────────
  */
 
 import axios from 'axios';
@@ -65,11 +68,6 @@ export interface EngineResult {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/**
- * Sleeps for `ms` milliseconds.
- * Rejects immediately if the AbortSignal fires, so retry back-off
- * periods are interruptible by pause() or abort().
- */
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal.aborted) {
@@ -84,23 +82,13 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/**
- * Computes the initial bytesUploaded count when resuming mid-upload.
- * We cannot simply multiply index × chunkSize because the resume offset
- * stored in _uploadedOffset is always the exact acknowledged byte boundary,
- * which avoids any rounding error from integer division.
- */
 function resumeBytesUploaded(
   startChunkIndex: number,
   chunks: ChunkMeta[],
 ): number {
-  if (startChunkIndex === 0) {
-    return 0;
-  }
-  // The start of chunk N equals the end of chunk N-1, which is the exact
-  // byte offset that was last acknowledged.
-  const lastAcknowledgedChunk = chunks[startChunkIndex - 1];
-  return lastAcknowledgedChunk ? lastAcknowledgedChunk.end : 0;
+  if (startChunkIndex === 0) return 0;
+  const last = chunks[startChunkIndex - 1];
+  return last ? last.end : 0;
 }
 
 // ─── UploadEngine ─────────────────────────────────────────────────────────────
@@ -111,56 +99,25 @@ export class UploadEngine {
   private _abortController: AbortController = new AbortController();
   private _startChunkIndex = 0;
 
+  /** 30s stall watchdog — cancels a chunk if no upload progress is reported. */
+  private _stallTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly STALL_TIMEOUT_MS = 30_000;
+
   constructor(opts: UploadEngineOptions) {
     this._opts = opts;
-    console.log('[FastPix:UploadEngine] Constructor initialized', {
-      timestamp: new Date().toISOString(),
-      chunkSizeKB: opts.chunkSizeKB,
-      fileSizeBytes: opts.fileSizeBytes,
-      maxRetries: opts.maxRetries,
-      retryDelay: opts.retryDelay,
-    });
   }
 
-  /**
-   * Set the chunk index to start or resume from.
-   * Called by FastPixUpload after calculating chunkIndexForOffset().
-   */
   setStartChunkIndex(index: number): void {
-    console.log('[FastPix:UploadEngine] setStartChunkIndex() called', {
-      timestamp: new Date().toISOString(),
-      startChunkIndex: index,
-    });
     this._startChunkIndex = index;
   }
 
-  /**
-   * Abort the in-progress upload immediately.
-   * Cancels both the axios request and any active sleep() during back-off.
-   */
   abort(): void {
-    console.log('[FastPix:UploadEngine] abort() called', {
-      timestamp: new Date().toISOString(),
-    });
     this._abortController.abort();
     this._cancelSource?.cancel('Upload aborted.');
+    this._clearStallWatchdog();
   }
 
-  /**
-   * Run the sequential chunk upload loop from _startChunkIndex.
-   *
-   * Returns { success: true } when all chunks are acknowledged.
-   * Returns { success: false, error } on abort or non-recoverable failure.
-   * Never throws — the caller (FastPixUpload._runEngine) inspects the result.
-   */
   async run(): Promise<EngineResult> {
-    const runStartTime = Date.now();
-    console.log('[FastPix:UploadEngine] run() starting', {
-      timestamp: new Date().toISOString(),
-      startChunkIndex: this._startChunkIndex,
-    });
-
-    // Fresh AbortController for each run() so resume() works after abort().
     this._abortController = new AbortController();
     const signal = this._abortController.signal;
 
@@ -179,125 +136,56 @@ export class UploadEngine {
 
     const chunks = buildChunkList(fileSizeBytes, chunkSizeKB);
     let bytesUploaded = resumeBytesUploaded(this._startChunkIndex, chunks);
-    
-    console.log('[FastPix:UploadEngine] Chunk list built', {
-      totalChunks: chunks.length,
-      startChunk: this._startChunkIndex,
-      startingBytesUploaded: bytesUploaded,
-      chunkCount: chunks.length,
-    });
 
     for (let i = this._startChunkIndex; i < chunks.length; i++) {
-      // ── Abort check before starting each chunk ──────────────────────────
       if (signal.aborted) {
-        const elapsed = Date.now() - runStartTime;
-        console.log('[FastPix:UploadEngine] Upload aborted before chunk', {
-          chunksProcessed: i - this._startChunkIndex,
-          currentChunk: i,
-          duration: `${elapsed}ms`,
-        });
         return { success: false, error: new Error('Upload was aborted.') };
       }
 
       const chunk = chunks[i];
-      if (!chunk) {
-        // Should never happen — guard satisfies strict noUncheckedIndexedAccess.
-        continue;
-      }
+      if (!chunk) continue;
 
-      const chunkStartTime = Date.now();
-      console.log('[FastPix:UploadEngine] Starting chunk upload', {
-        chunkIndex: chunk.index,
-        chunkStart: chunk.start,
-        chunkEnd: chunk.end,
-        chunkSize: chunk.end - chunk.start,
-        uploadedSoFar: bytesUploaded,
-        totalBytes: fileSizeBytes,
-      });
-
-      // ── Per-chunk retry loop ────────────────────────────────────────────
       let attempt = 0;
       let uploaded = false;
 
       while (!uploaded) {
         if (signal.aborted) {
-          const elapsed = Date.now() - runStartTime;
-          console.log('[FastPix:UploadEngine] Upload aborted during chunk retry', {
-            chunk: i,
-            attempt,
-            duration: `${elapsed}ms`,
-          });
           return { success: false, error: new Error('Upload was aborted.') };
         }
 
         onChunkAttempt(chunk.index, attempt + 1);
 
         try {
-          const attemptStartTime = Date.now();
           await this._uploadChunk(chunk, endpoint, fileUri, signal);
-          const attemptDuration = Date.now() - attemptStartTime;
 
-          // ── Chunk succeeded ─────────────────────────────────────────────
           bytesUploaded += chunk.end - chunk.start;
-          const progressPercent = Math.round((bytesUploaded / fileSizeBytes) * 100);
-          const chunkDuration = Date.now() - chunkStartTime;
-          
-          console.log('[FastPix:UploadEngine] Chunk uploaded successfully', {
-            chunkIndex: chunk.index,
-            attempt: attempt + 1,
-            attemptDuration: `${attemptDuration}ms`,
-            totalChunkDuration: `${chunkDuration}ms`,
-            bytesUploaded,
-            progressPercent,
-          });
-          
           onProgress(bytesUploaded, fileSizeBytes);
           onChunkSuccess(chunk.index, chunk.end);
           uploaded = true;
 
         } catch (err) {
-          // ── Abort / cancel — do not retry ───────────────────────────────
-          const isAbort =
-            axios.isCancel(err) ||
+          // ── Distinguish user/network abort from a stall-watchdog cancel ──
+          // axios.isCancel() is true for BOTH cases, so we must check
+          // signal.aborted (only true for real user/network aborts) to
+          // decide whether a stall-cancelled chunk should be retried.
+          const isUserAbort =
             signal.aborted ||
             (err instanceof Error && err.message === 'AbortError');
 
-          if (isAbort) {
-            const elapsed = Date.now() - runStartTime;
-            console.log('[FastPix:UploadEngine] Upload cancelled', {
-              chunk: i,
-              attempt: attempt + 1,
-              duration: `${elapsed}ms`,
-            });
-            return {
-              success: false,
-              error: new Error('Upload was aborted.'),
-            };
+          if (isUserAbort) {
+            return { success: false, error: new Error('Upload was aborted.') };
           }
 
-          // ── Retriable failure ───────────────────────────────────────────
+          // Stall-cancels (axios.isCancel === true but signal not aborted)
+          // fall through here and are retried like any other failure.
+
           attempt += 1;
           const chunkError =
-            err instanceof Error
-              ? err
-              : new Error('Unknown chunk upload error.');
+            err instanceof Error ? err : new Error('Unknown chunk upload error.');
 
           onChunkAttemptFailure(chunk.index, attempt, chunkError);
 
-          console.log('[FastPix:UploadEngine] Chunk upload failed', {
-            chunkIndex: chunk.index,
-            attempt,
-            error: chunkError.message,
-            willRetry: attempt <= maxRetries,
-          });
-
           if (attempt > maxRetries) {
-            const elapsed = Date.now() - runStartTime;
-            console.log('[FastPix:UploadEngine] Max retries exceeded', {
-              chunk: chunk.index,
-              maxRetries,
-              duration: `${elapsed}ms`,
-            });
             return {
               success: false,
               error: new Error(
@@ -307,27 +195,15 @@ export class UploadEngine {
             };
           }
 
-          // Exponential back-off: delay × 2^(attempt-1)
-          // attempt=1 → delay×1, attempt=2 → delay×2, attempt=3 → delay×4 …
           const backoffMs = retryDelay * Math.pow(2, attempt - 1);
           console.warn(
             `[FastPix] Chunk ${chunk.index} failed (attempt ${attempt}/${maxRetries}). ` +
               `Retrying in ${backoffMs} ms — ${chunkError.message}`,
           );
-          console.log('[FastPix:UploadEngine] Starting retry back-off', {
-            chunkIndex: chunk.index,
-            attempt,
-            backoffMs,
-          });
 
           try {
             await sleep(backoffMs, signal);
           } catch {
-            // sleep() throws 'AbortError' when the signal fires mid-wait.
-            const elapsed = Date.now() - runStartTime;
-            console.log('[FastPix:UploadEngine] Aborted during back-off', {
-              duration: `${elapsed}ms`,
-            });
             return {
               success: false,
               error: new Error('Upload was aborted during retry back-off.'),
@@ -337,30 +213,35 @@ export class UploadEngine {
       }
     }
 
-    const totalDuration = Date.now() - runStartTime;
-    console.log('[FastPix:UploadEngine] run() completed successfully', {
-      timestamp: new Date().toISOString(),
-      totalDuration: `${totalDuration}ms`,
-      totalChunks: chunks.length,
-      totalBytes: fileSizeBytes,
-    });
-
     return { success: true };
   }
 
-  // ── Private helpers ───────────────────────────────────────────────────────
+  // ── Private ───────────────────────────────────────────────────────────────
+
+  private _clearStallWatchdog(): void {
+    if (this._stallTimer) {
+      clearTimeout(this._stallTimer);
+      this._stallTimer = null;
+    }
+  }
+
+  private _resetStallWatchdog(): void {
+    this._clearStallWatchdog();
+    this._stallTimer = setTimeout(() => {
+      console.warn(
+        `[FastPix] Upload stalled — no progress for ${this.STALL_TIMEOUT_MS / 1000}s. ` +
+          'Cancelling chunk to retry.',
+      );
+      this._cancelSource?.cancel('Upload stalled — no bytes transferred.');
+    }, this.STALL_TIMEOUT_MS);
+  }
 
   /**
    * Reads the chunk's byte range from disk and PUTs it to the endpoint.
    *
-   * The file is never fully loaded into memory. react-native-blob-util's
-   * readStream opens a native stream, emitting base64-encoded chunks into
-   * JS. We accumulate the base64 string, decode it to raw bytes, and hand
-   * those bytes to axios as a Uint8Array body.
-   *
    * Headers sent per chunk:
-   *   Content-Type:  application/octet-stream
-   *   Content-Range: bytes <start>-<end-1>/<totalSize>   (RFC 7233)
+   *   Content-Type:   application/octet-stream
+   *   Content-Range:  bytes <start>-<end-1>/<totalSize>   (RFC 7233)
    *   Content-Length: <chunk byte count>
    */
   private async _uploadChunk(
@@ -369,191 +250,86 @@ export class UploadEngine {
     fileUri: string,
     signal: AbortSignal,
   ): Promise<void> {
-    const uploadStartTime = Date.now();
-    console.log('[FastPix:UploadEngine] _uploadChunk() starting', {
-      chunkIndex: chunk.index,
-      start: chunk.start,
-      end: chunk.end,
-      size: chunk.end - chunk.start,
-    });
+    const base64Data = await this._readChunkAsBase64(fileUri, chunk.start, chunk.end);
 
-    // Read chunk from disk
-    const readStartTime = Date.now();
-    const base64Data = await this._readChunkAsBase64(
-      fileUri,
-      chunk.start,
-      chunk.end,
-    );
-    const readDuration = Date.now() - readStartTime;
-    console.log('[FastPix:UploadEngine] Chunk read from disk', {
-      duration: `${readDuration}ms`,
-      base64Length: base64Data.length,
-    });
+    if (signal.aborted) {
+      throw new Error('AbortError');
+    }
 
-    // Decode base64 → raw byte string, then wrap in Uint8Array so axios
-    // sends it as binary rather than a UTF-16 JS string.
-    const decodedStartTime = Date.now();
+    // Decode base64 → binary string → Uint8Array for the axios body.
     const rawBinary = RNBlobUtil.base64.decode(base64Data);
     const byteArray = Uint8Array.from(rawBinary, (c) => c.charCodeAt(0));
-    const decodedDuration = Date.now() - decodedStartTime;
-    console.log('[FastPix:UploadEngine] Chunk decoded', {
-      duration: `${decodedDuration}ms`,
-      byteArrayLength: byteArray.length,
-    });
 
     this._cancelSource = axios.CancelToken.source();
+    this._resetStallWatchdog();
 
-    const contentRange = buildContentRangeHeader(chunk);
-    const contentLength = String(chunk.end - chunk.start);
-
-    console.log('[FastPix:UploadEngine] Sending PUT request', {
-      contentRange,
-      contentLength,
-      timestamp: new Date().toISOString(),
-    });
-
-    const requestStartTime = Date.now();
     try {
-      const response = await axios.put(endpoint, byteArray, {
+      await axios.put(endpoint, byteArray, {
         cancelToken: this._cancelSource.token,
         signal,
+        timeout: 60_000,
         headers: {
           'Content-Type': 'application/octet-stream',
-          'Content-Range': contentRange,
-          'Content-Length': contentLength,
+          'Content-Range': buildContentRangeHeader(chunk),
+          'Content-Length': String(chunk.end - chunk.start),
         },
-        // Do NOT let axios throw on 308 Resume Incomplete —
-        // FastPix / GCS resumable uploads return 308 after every intermediate
-        // chunk; only the final chunk gets a 200/201.
+        // GCS resumable uploads return 308 for every intermediate chunk;
+        // only the final chunk gets 200/201.
         validateStatus: (status) =>
           (status >= 200 && status < 300) || status === 308,
+
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.loaded > 0) {
+            this._resetStallWatchdog();
+          }
+        },
       });
-      const requestDuration = Date.now() - requestStartTime;
-      const totalDuration = Date.now() - uploadStartTime;
-      
-      console.log('[FastPix:UploadEngine] PUT request completed', {
-        chunkIndex: chunk.index,
-        status: response.status,
-        requestDuration: `${requestDuration}ms`,
-        totalDuration: `${totalDuration}ms`,
-      });
-    } catch (err) {
-      const requestDuration = Date.now() - requestStartTime;
-      console.log('[FastPix:UploadEngine] PUT request failed', {
-        chunkIndex: chunk.index,
-        duration: `${requestDuration}ms`,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
+    } finally {
+      this._clearStallWatchdog();
     }
   }
 
   /**
-   * Reads bytes [start, end) from `fileUri` and returns them as a
-   * base64-encoded string using react-native-blob-util's streaming API.
+   * Read bytes [start, end) from the file and return them as a base64 string.
    *
-   * Using a stream (rather than readFile on the whole file) keeps memory
-   * usage constant regardless of total file size.
+   * ── See the file-level comment at the top of this file for background. ──
    *
-   * readStream(path, encoding, bufferSize, position)
-   *   - encoding   'base64'   → each onData event is a base64 string
-   *   - bufferSize            → max bytes read per event (= chunk size)
-   *   - position              → start byte offset in the file
+   * Strategy:
+   *   1. RNBlobUtil.fs.slice(fileUri, tempPath, start, end) — creates a
+   *      temp file containing ONLY this chunk's bytes (~5MB, never the
+   *      whole source file).
+   *   2. RNBlobUtil.fs.readFile(tempPath, 'base64') — reads that small
+   *      temp file fully into memory as base64. Safe because its size is
+   *      bounded by chunkSize, regardless of how large the source file is.
+   *   3. RNBlobUtil.fs.unlink(tempPath) — delete the temp file. Failure to
+   *      delete is logged but non-fatal (OS temp dirs are cleaned up
+   *      automatically and won't block the upload).
    *
-   * We close the stream as soon as we've read exactly (end - start) bytes
-   * to avoid over-reading into the next chunk's territory.
+   * Each call uses a unique temp filename (chunk index + random suffix) so
+   * concurrent retries or overlapping calls never collide.
    */
-  private _readChunkAsBase64(
+  private async _readChunkAsBase64(
     fileUri: string,
     start: number,
     end: number,
   ): Promise<string> {
-    return new Promise<string>((resolve, reject) => {
-      const streamStartTime = Date.now();
-      const chunkByteLength = end - start;
-      let base64Accumulator = '';
-      let bytesRead = 0;
-      let dataEventsCount = 0;
+    const tempPath = `${RNBlobUtil.fs.dirs.CacheDir}/fastpix_chunk_${start}_${end}_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2)}`;
 
-      console.log('[FastPix:UploadEngine] Opening file stream', {
-        start,
-        end,
-        chunkByteLength,
+    try {
+      // 1. Slice out exactly [start, end) into a small temp file.
+      await RNBlobUtil.fs.slice(fileUri, tempPath, start, end);
+
+      // 2. Read the (small) sliced file fully as base64.
+      const base64 = await RNBlobUtil.fs.readFile(tempPath, 'base64');
+
+      return base64;
+    } finally {
+      // 3. Always attempt cleanup, even if slice/readFile threw.
+      RNBlobUtil.fs.unlink(tempPath).catch((err: unknown) => {
+        console.warn(`[FastPix] Failed to delete temp chunk file ${tempPath}:`, err);
       });
-
-      RNBlobUtil.fs
-        .readStream(
-          fileUri,
-          'base64',
-          chunkByteLength, // bufferSize — read at most this many bytes per event
-          start,           // position  — seek to this offset before reading
-        )
-        .then((stream) => {
-          console.log('[FastPix:UploadEngine] File stream opened', {
-            duration: `${Date.now() - streamStartTime}ms`,
-          });
-
-          stream.open();
-
-          stream.onData((data) => {
-            const chunk = data as string;
-            base64Accumulator += chunk;
-            dataEventsCount += 1;
-
-            // Each base64 char represents 6 bits; 4 chars = 3 bytes.
-            // Approximate bytes read from the accumulated base64 length.
-            bytesRead = Math.floor((base64Accumulator.length * 3) / 4);
-
-            console.log('[FastPix:UploadEngine] Stream data event', {
-              eventNumber: dataEventsCount,
-              chunkSize: chunk.length,
-              bytesRead,
-              targetBytes: chunkByteLength,
-              progress: Math.round((bytesRead / chunkByteLength) * 100),
-            });
-
-            if (bytesRead >= chunkByteLength) {
-              // We have all the bytes we need — resolve without waiting for
-              // the stream's natural end, which may read slightly beyond
-              // the chunk boundary on some platforms.
-              console.log('[FastPix:UploadEngine] Stream read complete', {
-                duration: `${Date.now() - streamStartTime}ms`,
-                totalDataEvents: dataEventsCount,
-                bytesRead,
-                base64Length: base64Accumulator.length,
-              });
-              resolve(base64Accumulator);
-            }
-          });
-
-          stream.onError((err) => {
-            console.log('[FastPix:UploadEngine] Stream error', {
-              error: String(err),
-              duration: `${Date.now() - streamStartTime}ms`,
-            });
-            reject(new Error(String(err)));
-          });
-
-          // onEnd fires after all data has been emitted normally.
-          stream.onEnd(() => {
-            console.log('[FastPix:UploadEngine] Stream ended naturally', {
-              duration: `${Date.now() - streamStartTime}ms`,
-              bytesRead,
-            });
-            resolve(base64Accumulator);
-          });
-        })
-        .catch((err: unknown) => {
-          console.log('[FastPix:UploadEngine] Failed to open file stream', {
-            error: String(err),
-            duration: `${Date.now() - streamStartTime}ms`,
-          });
-          reject(
-            err instanceof Error
-              ? err
-              : new Error(`[FastPix] Failed to open file stream: ${String(err)}`),
-          );
-        });
-    });
+    }
   }
 }

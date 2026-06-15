@@ -1,28 +1,31 @@
 /**
- * UploadEngine  — Phase 2
+ * UploadEngine — Phase 2 (axios) — patched: slice-based chunk reading
  *
- * Handles the low-level mechanics of uploading a single file in sequential
- * chunks to a FastPix resumable upload endpoint.
+ * ── BACKGROUND ───────────────────────────────────────────────────────────
+ * RNBlobUtil.fs.readStream(path, 'base64', bufferSize, position):
+ *   - `bufferSize` controls bytes delivered PER onData event.
+ *   - It does NOT cap the TOTAL bytes read — the stream reads to EOF
+ *     regardless, and there is no working close()/pause() to stop it early
+ *     (confirmed at runtime on both platforms — neither method exists on
+ *     the returned stream object).
  *
- * Responsibilities:
- *   - Reading byte-range slices from disk via react-native-blob-util
- *   - Building correct HTTP headers (Content-Range, Content-Type)
- *   - Sending chunks sequentially with axios
- *   - Exponential back-off retry on transient failures
- *   - Surfacing progress, chunkAttempt, chunkAttemptFailure, and
- *     chunkSuccess events to the parent FastPixUpload class
+ * For a 57MB file with 5MB chunks, every chunk's stream kept reading to
+ * EOF in the background after the promise resolved, leaking tens of MB
+ * of orphaned base64 strings per chunk. By chunk 3, ~200MB+ of dead
+ * strings were alive simultaneously, exhausting memory and hanging the
+ * upload indefinitely.
  *
- * What this class does NOT do:
- *   - State machine management  →  FastPixUpload
- *   - Network connectivity      →  NetworkMonitor
- *   - Event fan-out             →  TypedEventEmitter (owned by FastPixUpload)
+ * ── FIX ──────────────────────────────────────────────────────────────────
+ * Replace readStream entirely with RNBlobUtil.fs.slice(path, destPath,
+ * start, end), which creates a small TEMP FILE containing exactly the
+ * requested byte range. We then readFile() that temp file (which is only
+ * ~5MB, never the whole source file) and delete it immediately after.
  *
- * react-native-blob-util file reading strategy:
- *   We use `readStream` with bufferSize = chunkSizeBytes and a start
- *   offset so only one chunk worth of bytes is loaded into memory at
- *   a time, keeping the footprint flat for very large video files.
- *   The stream emits base64-encoded data events which we accumulate
- *   and then decode to a Uint8Array for the axios PUT body.
+ * This guarantees:
+ *   - Exactly chunkByteLength bytes are ever read into memory.
+ *   - No lingering streams, no overreading, no leaks.
+ *   - Memory usage stays flat regardless of source file size.
+ * ─────────────────────────────────────────────────────────────────────────
  */
 export interface UploadEngineOptions {
     endpoint: string;
@@ -49,53 +52,42 @@ export declare class UploadEngine {
     private _cancelSource;
     private _abortController;
     private _startChunkIndex;
+    /** 30s stall watchdog — cancels a chunk if no upload progress is reported. */
+    private _stallTimer;
+    private readonly STALL_TIMEOUT_MS;
     constructor(opts: UploadEngineOptions);
-    /**
-     * Set the chunk index to start or resume from.
-     * Called by FastPixUpload after calculating chunkIndexForOffset().
-     */
     setStartChunkIndex(index: number): void;
-    /**
-     * Abort the in-progress upload immediately.
-     * Cancels both the axios request and any active sleep() during back-off.
-     */
     abort(): void;
-    /**
-     * Run the sequential chunk upload loop from _startChunkIndex.
-     *
-     * Returns { success: true } when all chunks are acknowledged.
-     * Returns { success: false, error } on abort or non-recoverable failure.
-     * Never throws — the caller (FastPixUpload._runEngine) inspects the result.
-     */
     run(): Promise<EngineResult>;
+    private _clearStallWatchdog;
+    private _resetStallWatchdog;
     /**
      * Reads the chunk's byte range from disk and PUTs it to the endpoint.
      *
-     * The file is never fully loaded into memory. react-native-blob-util's
-     * readStream opens a native stream, emitting base64-encoded chunks into
-     * JS. We accumulate the base64 string, decode it to raw bytes, and hand
-     * those bytes to axios as a Uint8Array body.
-     *
      * Headers sent per chunk:
-     *   Content-Type:  application/octet-stream
-     *   Content-Range: bytes <start>-<end-1>/<totalSize>   (RFC 7233)
+     *   Content-Type:   application/octet-stream
+     *   Content-Range:  bytes <start>-<end-1>/<totalSize>   (RFC 7233)
      *   Content-Length: <chunk byte count>
      */
     private _uploadChunk;
     /**
-     * Reads bytes [start, end) from `fileUri` and returns them as a
-     * base64-encoded string using react-native-blob-util's streaming API.
+     * Read bytes [start, end) from the file and return them as a base64 string.
      *
-     * Using a stream (rather than readFile on the whole file) keeps memory
-     * usage constant regardless of total file size.
+     * ── See the file-level comment at the top of this file for background. ──
      *
-     * readStream(path, encoding, bufferSize, position)
-     *   - encoding   'base64'   → each onData event is a base64 string
-     *   - bufferSize            → max bytes read per event (= chunk size)
-     *   - position              → start byte offset in the file
+     * Strategy:
+     *   1. RNBlobUtil.fs.slice(fileUri, tempPath, start, end) — creates a
+     *      temp file containing ONLY this chunk's bytes (~5MB, never the
+     *      whole source file).
+     *   2. RNBlobUtil.fs.readFile(tempPath, 'base64') — reads that small
+     *      temp file fully into memory as base64. Safe because its size is
+     *      bounded by chunkSize, regardless of how large the source file is.
+     *   3. RNBlobUtil.fs.unlink(tempPath) — delete the temp file. Failure to
+     *      delete is logged but non-fatal (OS temp dirs are cleaned up
+     *      automatically and won't block the upload).
      *
-     * We close the stream as soon as we've read exactly (end - start) bytes
-     * to avoid over-reading into the next chunk's territory.
+     * Each call uses a unique temp filename (chunk index + random suffix) so
+     * concurrent retries or overlapping calls never collide.
      */
     private _readChunkAsBase64;
 }

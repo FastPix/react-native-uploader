@@ -18,7 +18,13 @@ export declare class FastPixUpload {
      * Capped at 50 entries to avoid unbounded growth.
      */
     private readonly _stateHistory;
+    /** Timestamp tracking for state transition duration calculations */
+    private _stateChangeTime;
     constructor(opts: FastPixUploadOptions);
+    /** Helper to mask sensitive URLs */
+    private _maskUrl;
+    /** Helper to mask file paths */
+    private _maskPath;
     /**
      * Subscribe to an upload lifecycle event.
      * @returns A cleanup function — call it to unsubscribe (useful in useEffect).
