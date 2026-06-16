@@ -42,6 +42,10 @@ export class FastPixUpload {
 
   // Upload bookkeeping
   /** Resolved upload endpoint URL. */
+
+  /** fileUri with file:// scheme stripped — the form RNBlobUtil expects. */
+  private _resolvedFileUri = '';
+
   private _resolvedEndpoint = '';
   /** Total file size in bytes, populated at start(). */
   private _fileSizeBytes = 0;
@@ -240,6 +244,7 @@ export class FastPixUpload {
     this._uploadedOffset = 0;
     this._fileSizeBytes = 0;
     this._resolvedEndpoint = '';
+    this._resolvedFileUri = '';
     this._pausedByUser = false;
     this._transitionTo('IDLE');
   }
@@ -285,6 +290,8 @@ export class FastPixUpload {
     // 1. Resolve the endpoint URL (handles string and async factory).
     const endpointResolveStart = Date.now();
     this._resolvedEndpoint = await resolveEndpoint(this._opts.endpoint);
+    this._resolvedFileUri = this._opts.fileUri.replace(/^file:\/\//, '');
+
     const endpointResolveDuration = Date.now() - endpointResolveStart;
     console.log('[FastPix:FastPixUpload] Endpoint resolved', {
       duration: `${endpointResolveDuration}ms`,
@@ -294,7 +301,7 @@ export class FastPixUpload {
     // 2. Stat the file to get its exact byte size.
     //    react-native-blob-util returns stat.size as a string on both platforms.
     const statStartTime = Date.now();
-    const stat = await RNBlobUtil.fs.stat(this._opts.fileUri);
+    const stat = await RNBlobUtil.fs.stat(this._resolvedFileUri);
     this._fileSizeBytes = parseInt(String(stat.size), 10);
     const statDuration = Date.now() - statStartTime;
     console.log('[FastPix:FastPixUpload] File stat retrieved', {
@@ -363,7 +370,7 @@ export class FastPixUpload {
     const engineStartTime = Date.now();
     this._engine = new UploadEngine({
       endpoint: this._resolvedEndpoint,
-      fileUri: this._opts.fileUri,
+      fileUri: this._resolvedFileUri,
       fileSizeBytes: this._fileSizeBytes,
       chunkSizeKB: this._opts.chunkSize,
       maxRetries: this._opts.maxRetries,

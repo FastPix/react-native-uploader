@@ -6,6 +6,8 @@ export declare class FastPixUpload {
     private readonly _networkMonitor;
     private _engine;
     /** Resolved upload endpoint URL. */
+    /** fileUri with file:// scheme stripped — the form RNBlobUtil expects. */
+    private _resolvedFileUri;
     private _resolvedEndpoint;
     /** Total file size in bytes, populated at start(). */
     private _fileSizeBytes;
