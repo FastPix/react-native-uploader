@@ -12,14 +12,6 @@ export const DEFAULT_MAX_RETRIES = 5;
 /** Default initial retry delay in milliseconds. */
 export const DEFAULT_RETRY_DELAY_MS = 1000;
 
-/**
- * Validates the options passed to `FastPixUpload` and returns a
- * normalised, fully-resolved config with all defaults applied.
- *
- * Throws a descriptive `Error` if required fields are missing or
- * constraint violations are detected, matching the web SDK's
- * validation philosophy.
- */
 export function validateAndNormalizeOptions(
   opts: FastPixUploadOptions,
 ): Required<FastPixUploadOptions> {
@@ -109,10 +101,6 @@ export function validateAndNormalizeOptions(
   return normalized;
 }
 
-/**
- * Resolves the endpoint option to a plain string URL.
- * Handles both static strings and async factory functions.
- */
 export async function resolveEndpoint(
   endpoint: string | (() => Promise<string>),
 ): Promise<string> {

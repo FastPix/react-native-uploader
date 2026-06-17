@@ -1,17 +1,6 @@
 import type { ChunkMeta } from '../types';
 import { MIN_CHUNK_SIZE_KB } from '../utils/validation';
 
-/**
- * Builds the ordered list of chunk descriptors for a file.
- *
- * No file I/O is performed here – this produces only the byte-range
- * metadata. Actual reading is handled by the upload engine via
- * `react-native-blob-util`.
- *
- * @param fileSizeBytes - Total file size in bytes.
- * @param chunkSizeKB   - Desired chunk size in kilobytes (minimum 5 MB).
- * @returns Ordered array of `ChunkMeta` objects, last chunk may be smaller.
- */
 export function buildChunkList(
   fileSizeBytes: number,
   chunkSizeKB: number,
@@ -62,14 +51,6 @@ export function buildChunkList(
   return chunks;
 }
 
-/**
- * Calculates the chunk index for a given byte offset.
- * Used when resuming to determine the next chunk to upload.
- *
- * @param resumeOffset  - The byte offset acknowledged by the server.
- * @param chunkSizeKB   - Chunk size in KB.
- * @returns The zero-based index of the next chunk to upload.
- */
 export function chunkIndexForOffset(
   resumeOffset: number,
   chunkSizeKB: number,
@@ -87,12 +68,6 @@ export function chunkIndexForOffset(
   return index;
 }
 
-/**
- * Builds the HTTP `Content-Range` header value for a chunk.
- *
- * Format: `bytes <start>-<end-1>/<total>`
- * Example: `bytes 0-5242879/20971520`
- */
 export function buildContentRangeHeader(chunk: ChunkMeta): string {
   const headerValue = `bytes ${chunk.start}-${chunk.end - 1}/${chunk.totalSize}`;
   

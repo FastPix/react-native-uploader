@@ -1,20 +1,3 @@
-/**
- * NetworkMonitor
- *
- * Wraps `@react-native-community/netinfo` to expose a simple
- * "is the device online?" reactive interface that the upload engine
- * can subscribe to.
- *
- * Design decisions:
- * - Checks both `isConnected` (network interface up) and
- *   `isInternetReachable` (actual internet access confirmed) before
- *   reporting the device as online — matching the design document's
- *   "Network State Auditing" requirement.
- * - The class is deliberately side-effect–free until `start()` is
- *   called, so it can be constructed without immediately consuming
- *   resources.
- */
-
 import NetInfo from '@react-native-community/netinfo';
 import type { NetInfoState, NetInfoSubscription } from '@react-native-community/netinfo';
 
@@ -34,7 +17,7 @@ export class NetworkMonitor {
         timestamp: new Date().toISOString(),
         currentStatus: this._currentStatus,
       });
-      return; // Already listening.
+      return; 
     }
 
     console.log('[FastPix:NetworkMonitor] start() called - subscribing to network changes', {
@@ -79,10 +62,7 @@ export class NetworkMonitor {
     return this._currentStatus;
   }
 
-  /**
-   * Returns a one-shot promise resolving to the current network status.
-   * Useful for an initial check before starting an upload.
-   */
+
   async fetchCurrentStatus(): Promise<NetworkStatus> {
     const state = await NetInfo.fetch();
     return this._deriveStatus(state);
@@ -99,7 +79,7 @@ export class NetworkMonitor {
         isConnected: state.isConnected,
         isInternetReachable: state.isInternetReachable,
       });
-      return; // No change – skip redundant notifications.
+      return; 
     }
 
     const previousStatus = this._currentStatus;
@@ -124,13 +104,6 @@ export class NetworkMonitor {
     });
   }
 
-  /**
-   * Maps a `NetInfoState` to our simplified `NetworkStatus`.
-   *
-   * `isInternetReachable` can be `null` when the platform hasn't finished
-   * probing yet — we treat that as `'unknown'` rather than either definitive
-   * state.
-   */
   private _deriveStatus(state: NetInfoState): NetworkStatus {
     console.log('[FastPix:NetworkMonitor] Deriving status from NetInfoState', {
       timestamp: new Date().toISOString(),
