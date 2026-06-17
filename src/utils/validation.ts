@@ -3,6 +3,8 @@ import type { FastPixUploadOptions } from '../types';
 /** Minimum chunk size allowed: 5 MB expressed in KB. */
 export const MIN_CHUNK_SIZE_KB = 5 * 1024;
 
+export const MAX_CHUNK_SIZE_KB = 500 * 1024; // 500 MB in KB
+
 /** Default chunk size: 5 MB in KB (same as web SDK minimum). */
 export const DEFAULT_CHUNK_SIZE_KB = 5 * 1024;
 
@@ -58,6 +60,12 @@ export function validateAndNormalizeOptions(
     throw new Error(
       `[FastPix] "chunkSize" must be at least ${MIN_CHUNK_SIZE_KB} KB (5 MB). ` +
         `Received: ${chunkSize} KB.`,
+    );
+  }
+
+  if (chunkSize > MAX_CHUNK_SIZE_KB) {
+    throw new TypeError(
+      `Chunk size cannot exceed 500MB (512000 KB). Current chunk size: ${chunkSize} KB.`
     );
   }
 
