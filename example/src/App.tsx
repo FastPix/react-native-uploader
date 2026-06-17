@@ -78,85 +78,10 @@ export default function App() {
     setEta('--');
   };
 
-  // ─── iOS: clean up old copied files from Documents to free space ─────────
-  const cleanupOldIosCopies = async () => {
-    if (Platform.OS !== 'ios') return;
-    try {
-      // Use RNBlobUtil path — must match what copyToStableUriIfNeeded writes
-      const docDir = RNBlobUtil.fs.dirs.DocumentDir;
-      const entries = await RNBlobUtil.fs.ls(docDir);
-      await Promise.all(
-        entries
-          .filter((name: string) => name.endsWith('.mp4') || name.endsWith('.mov'))
-          .map((name: string) =>
-            RNBlobUtil.fs.unlink(`${docDir}/${name}`).catch(() => {}),
-          ),
-      );
-    } catch {
-      // non-fatal
-    }
-  };
-
-  // ─── iOS: copy /tmp/ file to Documents immediately after picker returns ──
-  // CRITICAL: this must happen BEFORE any other await (API calls etc.)
-  // because iOS cleans /tmp/ files aggressively — sometimes within seconds
-  // of the picker dismissing.
-  const copyToStableUriIfNeeded = async (uri: string): Promise<string | null> => {
-  if (Platform.OS !== 'ios') return uri;
-
-  const sourcePath = uri.replace(/^file:\/\//, '');
-  // const sourcePath = decodeURIComponent(
-  //     uri.replace(/^file:\/\//, '')
-  //   );
-
-  //   console.log('decodedPath', sourcePath);
-
-  //   console.log(
-  //     'exists decoded?',
-  //     await RNFS.exists(sourcePath),
-  //   );
-  const fileName = sourcePath.split('/').pop() ?? `fastpix_upload_${Date.now()}.mp4`;
-
-  addLog('iOS: copying to Documents (persistent storage)...', 'info');
-
-  try {
-    const destPath = `${RNFS.DocumentDirectoryPath}/${fileName}`;
-    console.log('uri', uri);
-    console.log('sourcePath', sourcePath);
-
-    const exists = await RNFS.exists(sourcePath);
-    console.log('exists?', exists);
-    await RNFS.copyFile(sourcePath, destPath);
-
-    const stat = await RNFS.stat(destPath);
-    if (!stat || stat.size === 0) {
-      addLog('❌ iOS copy produced an empty file. Try again.', 'error');
-      return null;
-    }
-
-    addLog(
-      `iOS: copied to Documents (${formatBytes(Number(stat.size))})`,
-      'success',
-    );
-
-    return `file://${destPath}`;
-  } catch (copyErr: any) {
-    addLog(
-      `❌ iOS copy failed: ${copyErr?.message ?? String(copyErr)}`,
-      'error',
-    );
-    return null;
-  }
-};
-
   const pickAndUpload = async () => {
     try {
       resetStats();
 
-      // ── Step 1: clean up old iOS copies to free Documents space ──────────
-      await cleanupOldIosCopies();
-
-      // ── Step 2: pick the file ─────────────────────────────────────────────
       const result = await launchImageLibrary({mediaType: 'video'});
       const asset = result.assets?.[0];
 
@@ -169,18 +94,6 @@ export default function App() {
       addLog(`Selected file: ${asset.fileName}`, 'success');
       console.log(asset);
 
-      // // ── Step 3: copy to stable path on iOS IMMEDIATELY ───────────────────
-      // // This MUST happen before ApiService.createDirectUpload() or any other
-      // // await — iOS can delete /tmp/ files within seconds of picker close.
-      // const stableUri = await copyToStableUriIfNeeded(asset.uri);
-      // if (!stableUri) {
-      //   // copyToStableUriIfNeeded already logged the reason
-      //   return;
-      // }
-
-      // addLog(`Stable URI: ${stableUri}`,`info`);
-
-      // ── Step 4: get the upload URL from your server ───────────────────────
       setUploadState('Getting Upload URL');
 
       const uploadDetails = await ApiService.createDirectUpload();
@@ -192,7 +105,6 @@ export default function App() {
 
       addLog(`Upload ID: ${uploadDetails.uploadId}`);
 
-      // ── Step 5: create the SDK instance with the stable URI ───────────────
       addLog('Entering to uploading phase...');
 
       console.log('Original asset uri:', asset.uri);
@@ -208,8 +120,6 @@ export default function App() {
       });
 
       setUploadRef(upload);
-
-      // ── Step 6: wire up events ────────────────────────────────────────────
 
       upload.on('started', ({fileSize}) => {
         setUploadState('Uploading');
@@ -262,10 +172,6 @@ export default function App() {
         setUploadState('Completed');
         addLog('Upload Completed Successfully', 'success');
 
-        // Clean up the iOS copy now that upload is done
-        if (Platform.OS === 'ios') {
-          cleanupOldIosCopies().catch(() => {});
-        }
       });
 
       upload.on('error', ({message}) => {
