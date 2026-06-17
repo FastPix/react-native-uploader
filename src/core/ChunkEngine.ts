@@ -1,3 +1,4 @@
+import { log } from '../logger';
 import type { ChunkMeta } from '../types';
 import { MIN_CHUNK_SIZE_KB } from '../utils/validation';
 
@@ -5,7 +6,7 @@ export function buildChunkList(
   fileSizeBytes: number,
   chunkSizeKB: number,
 ): ChunkMeta[] {
-  console.log('[FastPix:ChunkEngine] buildChunkList() called', {
+  log('[FastPix:ChunkEngine] buildChunkList() called', {
     timestamp: new Date().toISOString(),
     fileSizeBytes,
     fileSizeMB: (fileSizeBytes / (1024 * 1024)).toFixed(2),
@@ -41,7 +42,7 @@ export function buildChunkList(
     index += 1;
   }
 
-  console.log('[FastPix:ChunkEngine] Chunk list created', {
+  log('[FastPix:ChunkEngine] Chunk list created', {
     totalChunks: chunks.length,
     firstChunkSize: chunks[0] ? chunks[0].end - chunks[0].start : 0,
     lastChunkSize: chunks[chunks.length - 1] ? chunks[chunks.length - 1].end - chunks[chunks.length - 1].start : 0,
@@ -58,7 +59,7 @@ export function chunkIndexForOffset(
   const chunkSizeBytes = chunkSizeKB * 1024;
   const index = Math.floor(resumeOffset / chunkSizeBytes);
   
-  console.log('[FastPix:ChunkEngine] chunkIndexForOffset() calculated', {
+  log('[FastPix:ChunkEngine] chunkIndexForOffset() calculated', {
     resumeOffset,
     chunkSizeKB,
     chunkSizeBytes,
@@ -71,7 +72,7 @@ export function chunkIndexForOffset(
 export function buildContentRangeHeader(chunk: ChunkMeta): string {
   const headerValue = `bytes ${chunk.start}-${chunk.end - 1}/${chunk.totalSize}`;
   
-  console.log('[FastPix:ChunkEngine] buildContentRangeHeader() created', {
+  log('[FastPix:ChunkEngine] buildContentRangeHeader() created', {
     chunkIndex: chunk.index,
     start: chunk.start,
     end: chunk.end - 1,

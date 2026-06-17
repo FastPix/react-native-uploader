@@ -1,3 +1,4 @@
+import { warn } from '../logger';
 import type {
   UploadEventName,
   UploadEventCallback,
@@ -55,7 +56,7 @@ export class TypedEventEmitter {
       try {
         callback(payload);
       } catch (err) {
-        console.warn(
+        warn(
           `[FastPix] Uncaught error in "${event}" listener:`,
           err,
         );

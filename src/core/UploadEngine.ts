@@ -3,6 +3,7 @@ import type { CancelTokenSource } from 'axios';
 import RNBlobUtil from 'react-native-blob-util';
 import type { ChunkMeta } from '../types';
 import { buildContentRangeHeader, buildChunkList } from './ChunkEngine';
+import { warn } from '../logger';
 
 // ─── Public interfaces ────────────────────────────────────────────────────────
 
@@ -159,7 +160,7 @@ export class UploadEngine {
           }
 
           const backoffMs = retryDelay * Math.pow(2, attempt - 1);
-          console.warn(
+          warn(
             `[FastPix] Chunk ${chunk.index} failed (attempt ${attempt}/${maxRetries}). ` +
               `Retrying in ${backoffMs} ms — ${chunkError.message}`,
           );
@@ -189,7 +190,7 @@ export class UploadEngine {
   private _resetStallWatchdog(): void {
     this._clearStallWatchdog();
     this._stallTimer = setTimeout(() => {
-      console.warn(
+      warn(
         `[FastPix] Upload stalled — no progress for ${this.STALL_TIMEOUT_MS / 1000}s. ` +
           'Cancelling chunk to retry.',
       );
@@ -262,7 +263,7 @@ export class UploadEngine {
     } finally {
       // 3. Always attempt cleanup, even if slice/readFile threw.
       RNBlobUtil.fs.unlink(tempPath).catch((err: unknown) => {
-        console.warn(`[FastPix] Failed to delete temp chunk file ${tempPath}:`, err);
+        warn(`[FastPix] Failed to delete temp chunk file ${tempPath}:`, err);
       });
     }
   }

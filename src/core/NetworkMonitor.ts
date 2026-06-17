@@ -1,5 +1,6 @@
 import NetInfo from '@react-native-community/netinfo';
 import type { NetInfoState, NetInfoSubscription } from '@react-native-community/netinfo';
+import { log, warn } from '../logger';
 
 export type NetworkStatus = 'online' | 'offline' | 'unknown';
 
@@ -13,14 +14,14 @@ export class NetworkMonitor {
   /** Start listening to network state changes. */
   start(): void {
     if (this._subscription) {
-      console.log('[FastPix:NetworkMonitor] start() called but already listening', {
+      log('[FastPix:NetworkMonitor] start() called but already listening', {
         timestamp: new Date().toISOString(),
         currentStatus: this._currentStatus,
       });
       return; 
     }
 
-    console.log('[FastPix:NetworkMonitor] start() called - subscribing to network changes', {
+    log('[FastPix:NetworkMonitor] start() called - subscribing to network changes', {
       timestamp: new Date().toISOString(),
     });
 
@@ -31,7 +32,7 @@ export class NetworkMonitor {
 
   /** Stop listening and clean up the native subscription. */
   stop(): void {
-    console.log('[FastPix:NetworkMonitor] stop() called', {
+    log('[FastPix:NetworkMonitor] stop() called', {
       timestamp: new Date().toISOString(),
       currentStatus: this._currentStatus,
       callbackCount: this._callbacks.size,
@@ -43,14 +44,14 @@ export class NetworkMonitor {
 
   /** Register a callback to be notified of network status changes. */
   onChange(callback: NetworkChangeCallback): () => void {
-    console.log('[FastPix:NetworkMonitor] onChange() - registering callback', {
+    log('[FastPix:NetworkMonitor] onChange() - registering callback', {
       timestamp: new Date().toISOString(),
       callbackCount: this._callbacks.size + 1,
     });
     this._callbacks.add(callback);
     return () => {
       this._callbacks.delete(callback);
-      console.log('[FastPix:NetworkMonitor] onChange cleanup - callback unregistered', {
+      log('[FastPix:NetworkMonitor] onChange cleanup - callback unregistered', {
         timestamp: new Date().toISOString(),
         callbackCount: this._callbacks.size,
       });
@@ -73,7 +74,7 @@ export class NetworkMonitor {
   private _handleStateChange(state: NetInfoState): void {
     const newStatus = this._deriveStatus(state);
     if (newStatus === this._currentStatus) {
-      console.log('[FastPix:NetworkMonitor] Network state changed but status unchanged', {
+      log('[FastPix:NetworkMonitor] Network state changed but status unchanged', {
         timestamp: new Date().toISOString(),
         status: newStatus,
         isConnected: state.isConnected,
@@ -85,7 +86,7 @@ export class NetworkMonitor {
     const previousStatus = this._currentStatus;
     this._currentStatus = newStatus;
     
-    console.log('[FastPix:NetworkMonitor] Network status changed', {
+    log('[FastPix:NetworkMonitor] Network status changed', {
       timestamp: new Date().toISOString(),
       previousStatus,
       newStatus,
@@ -99,13 +100,13 @@ export class NetworkMonitor {
       try {
         cb(newStatus);
       } catch (err) {
-        console.warn('[FastPix:NetworkMonitor] Callback error:', err);
+        warn('[FastPix:NetworkMonitor] Callback error:', err);
       }
     });
   }
 
   private _deriveStatus(state: NetInfoState): NetworkStatus {
-    console.log('[FastPix:NetworkMonitor] Deriving status from NetInfoState', {
+    log('[FastPix:NetworkMonitor] Deriving status from NetInfoState', {
       timestamp: new Date().toISOString(),
       isConnected: state.isConnected,
       isInternetReachable: state.isInternetReachable,

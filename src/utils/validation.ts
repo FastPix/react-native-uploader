@@ -1,3 +1,4 @@
+import { log } from '../logger';
 import type { FastPixUploadOptions } from '../types';
 
 /** Minimum chunk size allowed: 5 MB expressed in KB. */
@@ -17,7 +18,7 @@ export const DEFAULT_RETRY_DELAY_MS = 1000;
 export function validateAndNormalizeOptions(
   opts: FastPixUploadOptions,
 ): Required<FastPixUploadOptions> {
-  console.log('[FastPix:validation] validateAndNormalizeOptions() starting', {
+  log('[FastPix:validation] validateAndNormalizeOptions() starting', {
     timestamp: new Date().toISOString(),
     hasEndpoint: !!opts?.endpoint,
     hasFileUri: !!opts?.fileUri,
@@ -96,7 +97,7 @@ export function validateAndNormalizeOptions(
     autoHandleNetworkEvents,
   };
 
-  console.log('[FastPix:validation] Options normalized successfully', {
+  log('[FastPix:validation] Options normalized successfully', {
     endpoint: typeof opts.endpoint === 'function' ? 'factory-function' : 'static-url',
     fileUri: opts.fileUri.substring(0, 50),
     chunkSize,
@@ -113,14 +114,14 @@ export async function resolveEndpoint(
   endpoint: string | (() => Promise<string>),
 ): Promise<string> {
   const resolveStartTime = Date.now();
-  console.log('[FastPix:validation] resolveEndpoint() starting', {
+  log('[FastPix:validation] resolveEndpoint() starting', {
     timestamp: new Date().toISOString(),
     endpointType: typeof endpoint,
   });
 
   if (typeof endpoint === 'function') {
     try {
-      console.log('[FastPix:validation] Calling endpoint factory function', {
+      log('[FastPix:validation] Calling endpoint factory function', {
         timestamp: new Date().toISOString(),
       });
       const url = await endpoint();
@@ -132,7 +133,7 @@ export async function resolveEndpoint(
         );
       }
       
-      console.log('[FastPix:validation] Endpoint factory resolved', {
+      log('[FastPix:validation] Endpoint factory resolved', {
         duration: `${duration}ms`,
         urlLength: url.length,
         urlPreview: url.substring(0, 50) + '...',
@@ -140,7 +141,7 @@ export async function resolveEndpoint(
       
       return url;
     } catch (err) {
-      console.log('[FastPix:validation] Endpoint factory failed', {
+      log('[FastPix:validation] Endpoint factory failed', {
         error: err instanceof Error ? err.message : String(err),
         duration: `${Date.now() - resolveStartTime}ms`,
       });
@@ -149,7 +150,7 @@ export async function resolveEndpoint(
   }
 
   const duration = Date.now() - resolveStartTime;
-  console.log('[FastPix:validation] Static endpoint used', {
+  log('[FastPix:validation] Static endpoint used', {
     duration: `${duration}ms`,
     urlLength: endpoint.length,
     urlPreview: endpoint.substring(0, 50) + '...',
