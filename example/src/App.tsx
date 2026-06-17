@@ -104,17 +104,17 @@ export default function App() {
   const copyToStableUriIfNeeded = async (uri: string): Promise<string | null> => {
   if (Platform.OS !== 'ios') return uri;
 
-  // const sourcePath = uri.replace(/^file:\/\//, '');
-  const sourcePath = decodeURIComponent(
-      uri.replace(/^file:\/\//, '')
-    );
+  const sourcePath = uri.replace(/^file:\/\//, '');
+  // const sourcePath = decodeURIComponent(
+  //     uri.replace(/^file:\/\//, '')
+  //   );
 
-    console.log('decodedPath', sourcePath);
+  //   console.log('decodedPath', sourcePath);
 
-    console.log(
-      'exists decoded?',
-      await RNFS.exists(sourcePath),
-    );
+  //   console.log(
+  //     'exists decoded?',
+  //     await RNFS.exists(sourcePath),
+  //   );
   const fileName = sourcePath.split('/').pop() ?? `fastpix_upload_${Date.now()}.mp4`;
 
   addLog('iOS: copying to Documents (persistent storage)...', 'info');
@@ -172,13 +172,13 @@ export default function App() {
       // // ── Step 3: copy to stable path on iOS IMMEDIATELY ───────────────────
       // // This MUST happen before ApiService.createDirectUpload() or any other
       // // await — iOS can delete /tmp/ files within seconds of picker close.
-      const stableUri = await copyToStableUriIfNeeded(asset.uri);
-      if (!stableUri) {
-        // copyToStableUriIfNeeded already logged the reason
-        return;
-      }
+      // const stableUri = await copyToStableUriIfNeeded(asset.uri);
+      // if (!stableUri) {
+      //   // copyToStableUriIfNeeded already logged the reason
+      //   return;
+      // }
 
-      addLog(`Stable URI: ${stableUri}`,`info`);
+      // addLog(`Stable URI: ${stableUri}`,`info`);
 
       // ── Step 4: get the upload URL from your server ───────────────────────
       setUploadState('Getting Upload URL');
@@ -196,11 +196,11 @@ export default function App() {
       addLog('Entering to uploading phase...');
 
       console.log('Original asset uri:', asset.uri);
-      console.log('Final uri passed to SDK:', stableUri);
+      console.log('Final uri passed to SDK:', asset.uri);
 
       const upload = new FastPixUpload({
         endpoint: uploadDetails.url,
-        fileUri: stableUri,
+        fileUri: asset.uri,
         chunkSize: Number(chunkSize),
         maxRetries: Number(maxRetries),
         retryDelay: Number(retryDelay),

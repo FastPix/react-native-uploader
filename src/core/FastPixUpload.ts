@@ -241,7 +241,9 @@ export class FastPixUpload {
 
     const endpointResolveStart = Date.now();
     this._resolvedEndpoint = await resolveEndpoint(this._opts.endpoint);
-    this._resolvedFileUri = this._opts.fileUri.replace(/^file:\/\//, '');
+    this._resolvedFileUri = decodeURIComponent(
+          this._opts.fileUri.replace(/^file:\/\//, ''),
+        );
 
     const endpointResolveDuration = Date.now() - endpointResolveStart;
     log('[FastPix:FastPixUpload] Endpoint resolved', {
