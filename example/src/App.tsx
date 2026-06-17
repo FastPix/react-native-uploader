@@ -79,23 +79,23 @@ export default function App() {
   };
 
   // ─── iOS: clean up old copied files from Documents to free space ─────────
-  // const cleanupOldIosCopies = async () => {
-  //   if (Platform.OS !== 'ios') return;
-  //   try {
-  //     // Use RNBlobUtil path — must match what copyToStableUriIfNeeded writes
-  //     const docDir = RNBlobUtil.fs.dirs.DocumentDir;
-  //     const entries = await RNBlobUtil.fs.ls(docDir);
-  //     await Promise.all(
-  //       entries
-  //         .filter((name: string) => name.endsWith('.mp4') || name.endsWith('.mov'))
-  //         .map((name: string) =>
-  //           RNBlobUtil.fs.unlink(`${docDir}/${name}`).catch(() => {}),
-  //         ),
-  //     );
-  //   } catch {
-  //     // non-fatal
-  //   }
-  // };
+  const cleanupOldIosCopies = async () => {
+    if (Platform.OS !== 'ios') return;
+    try {
+      // Use RNBlobUtil path — must match what copyToStableUriIfNeeded writes
+      const docDir = RNBlobUtil.fs.dirs.DocumentDir;
+      const entries = await RNBlobUtil.fs.ls(docDir);
+      await Promise.all(
+        entries
+          .filter((name: string) => name.endsWith('.mp4') || name.endsWith('.mov'))
+          .map((name: string) =>
+            RNBlobUtil.fs.unlink(`${docDir}/${name}`).catch(() => {}),
+          ),
+      );
+    } catch {
+      // non-fatal
+    }
+  };
 
   // ─── iOS: copy /tmp/ file to Documents immediately after picker returns ──
   // CRITICAL: this must happen BEFORE any other await (API calls etc.)
@@ -104,13 +104,28 @@ export default function App() {
   const copyToStableUriIfNeeded = async (uri: string): Promise<string | null> => {
   if (Platform.OS !== 'ios') return uri;
 
-  const sourcePath = uri.replace(/^file:\/\//, '');
+  // const sourcePath = uri.replace(/^file:\/\//, '');
+  const sourcePath = decodeURIComponent(
+      uri.replace(/^file:\/\//, '')
+    );
+
+    console.log('decodedPath', sourcePath);
+
+    console.log(
+      'exists decoded?',
+      await RNFS.exists(sourcePath),
+    );
   const fileName = sourcePath.split('/').pop() ?? `fastpix_upload_${Date.now()}.mp4`;
 
   addLog('iOS: copying to Documents (persistent storage)...', 'info');
 
   try {
     const destPath = `${RNFS.DocumentDirectoryPath}/${fileName}`;
+    console.log('uri', uri);
+    console.log('sourcePath', sourcePath);
+
+    const exists = await RNFS.exists(sourcePath);
+    console.log('exists?', exists);
     await RNFS.copyFile(sourcePath, destPath);
 
     const stat = await RNFS.stat(destPath);
@@ -139,7 +154,7 @@ export default function App() {
       resetStats();
 
       // ── Step 1: clean up old iOS copies to free Documents space ──────────
-      // await cleanupOldIosCopies();
+      await cleanupOldIosCopies();
 
       // ── Step 2: pick the file ─────────────────────────────────────────────
       const result = await launchImageLibrary({mediaType: 'video'});
@@ -152,17 +167,18 @@ export default function App() {
 
       setFileInfo(asset);
       addLog(`Selected file: ${asset.fileName}`, 'success');
+      console.log(asset);
 
       // // ── Step 3: copy to stable path on iOS IMMEDIATELY ───────────────────
       // // This MUST happen before ApiService.createDirectUpload() or any other
       // // await — iOS can delete /tmp/ files within seconds of picker close.
-      // const stableUri = await copyToStableUriIfNeeded(asset.uri);
-      // if (!stableUri) {
-      //   // copyToStableUriIfNeeded already logged the reason
-      //   return;
-      // }
+      const stableUri = await copyToStableUriIfNeeded(asset.uri);
+      if (!stableUri) {
+        // copyToStableUriIfNeeded already logged the reason
+        return;
+      }
 
-      // addLog(`Stable URI: ${stableUri}`,`info`);
+      addLog(`Stable URI: ${stableUri}`,`info`);
 
       // ── Step 4: get the upload URL from your server ───────────────────────
       setUploadState('Getting Upload URL');
@@ -179,9 +195,12 @@ export default function App() {
       // ── Step 5: create the SDK instance with the stable URI ───────────────
       addLog('Entering to uploading phase...');
 
+      console.log('Original asset uri:', asset.uri);
+      console.log('Final uri passed to SDK:', stableUri);
+
       const upload = new FastPixUpload({
         endpoint: uploadDetails.url,
-        fileUri: asset.uri,              
+        fileUri: stableUri,
         chunkSize: Number(chunkSize),
         maxRetries: Number(maxRetries),
         retryDelay: Number(retryDelay),
@@ -244,9 +263,9 @@ export default function App() {
         addLog('Upload Completed Successfully', 'success');
 
         // Clean up the iOS copy now that upload is done
-        // if (Platform.OS === 'ios') {
-        //   cleanupOldIosCopies().catch(() => {});
-        // }
+        if (Platform.OS === 'ios') {
+          cleanupOldIosCopies().catch(() => {});
+        }
       });
 
       upload.on('error', ({message}) => {
