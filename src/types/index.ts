@@ -28,7 +28,8 @@ export type UploadEventName =
   | 'resume'
   | 'offline'
   | 'online'
-  | 'stateChange';
+  | 'stateChange'
+  | 'abort';
 
 /** Strongly-typed payload for every event. */
 export interface UploadEventPayloads {
@@ -64,6 +65,12 @@ export interface UploadEventPayloads {
 
   /** Fired when the device regains internet connectivity. */
   online: undefined;
+
+    /**
+   * Fired when abort() is called and the upload is successfully cancelled.
+   */
+
+  abort: undefined;
 
   stateChange: { from: UploadState; to: UploadState };
 }

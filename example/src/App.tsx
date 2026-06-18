@@ -193,6 +193,11 @@ export default function App() {
         addLog(`Resumed from ${fromOffset}`, 'success');
       });
 
+      upload.on('abort', () => {
+        setUploadState('Aborted');
+        addLog('Upload aborted.', 'warning');
+      });
+
       upload.on('offline', () => addLog('Network Offline', 'warning'));
       upload.on('online', () => addLog('Network Online', 'success'));
 

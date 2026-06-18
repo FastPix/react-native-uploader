@@ -188,6 +188,10 @@ export class FastPixUpload {
   }
 
   abort(): void {
+    if (this._state === 'IDLE') {
+      return;
+    }
+
     log('[FastPix:FastPixUpload] abort() called', {
       timestamp: new Date().toISOString(),
       currentState: this._state,
@@ -197,13 +201,14 @@ export class FastPixUpload {
 
     this._engine?.abort();
     this._networkMonitor.stop();
+    this._emitter.emit('abort', undefined);
+    this._transitionTo('IDLE');
     this._emitter.removeAllListeners();
     this._uploadedOffset = 0;
     this._fileSizeBytes = 0;
     this._resolvedEndpoint = '';
     this._resolvedFileUri = '';
     this._pausedByUser = false;
-    this._transitionTo('IDLE');
   }
 
   get state(): UploadState {
