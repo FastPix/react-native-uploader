@@ -88,12 +88,22 @@ export function validateAndNormalizeOptions(
 
   const autoHandleNetworkEvents = opts.autoHandleNetworkEvents ?? true;
 
+  const maxFileSize = opts.maxFileSize ?? 0; // 0 = no limit
+  if (typeof maxFileSize !== 'number' || maxFileSize < 0) {
+    throw new Error(
+      '[FastPix] "maxFileSize" must be a non-negative number (bytes). ' +
+        'Example: 100 * 1024 * 1024 for 100 MB.',
+    );
+  }
+
+
   const normalized = {
     endpoint: opts.endpoint,
     fileUri: opts.fileUri,
     chunkSize,
     maxRetries,
     retryDelay,
+    maxFileSize,
     autoHandleNetworkEvents,
   };
 

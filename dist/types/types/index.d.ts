@@ -67,6 +67,7 @@ export interface FastPixUploadOptions {
     chunkSize?: number;
     maxRetries?: number;
     retryDelay?: number;
+    maxFileSize?: number;
     autoHandleNetworkEvents?: boolean;
 }
 /** Internal representation of a single file chunk. */

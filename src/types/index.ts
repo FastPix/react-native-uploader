@@ -87,6 +87,8 @@ export interface FastPixUploadOptions {
 
   retryDelay?: number;
 
+  maxFileSize?: number;
+
   autoHandleNetworkEvents?: boolean;
 }
 

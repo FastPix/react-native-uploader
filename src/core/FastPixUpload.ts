@@ -268,6 +268,15 @@ export class FastPixUpload {
       );
     }
 
+      if (this._opts.maxFileSize > 0 && this._fileSizeBytes > this._opts.maxFileSize) {
+      const fileMB = (this._fileSizeBytes / (1024 * 1024)).toFixed(2);
+      const limitMB = (this._opts.maxFileSize / (1024 * 1024)).toFixed(2);
+      throw new Error(
+        `[FastPix] File size ${fileMB} MB exceeds the maximum allowed size of ${limitMB} MB.`,
+      );
+    }
+
+
     if (this._opts.autoHandleNetworkEvents) {
       log('[FastPix:FastPixUpload] Setting up network handling', {
         timestamp: new Date().toISOString(),
