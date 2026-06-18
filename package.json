@@ -148,7 +148,7 @@
     "tools": [
       "release-it",
       "eslint",
-      "jest"
+      "t"
     ],
     "version": "0.62.0"
   },
