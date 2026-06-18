@@ -110,12 +110,14 @@ export default function App() {
       console.log('Original asset uri:', asset.uri);
       console.log('Final uri passed to SDK:', asset.uri);
 
+      addLog(`Chunk Size: ${chunkSize}`);
+
       const upload = new FastPixUpload({
         endpoint: uploadDetails.url,
         fileUri: asset.uri,
-        chunkSize: Number(chunkSize),
-        maxRetries: Number(maxRetries),
-        retryDelay: Number(retryDelay),
+        chunkSize: chunkSize.trim() ? Number(chunkSize) : undefined,
+        maxRetries: maxRetries.trim() ? Number(maxRetries) : undefined,
+        retryDelay: retryDelay.trim() ? Number(retryDelay) : undefined,
         autoHandleNetworkEvents: true,
         // maxFileSize: 5 * 1024 * 1024 // 100 MB Limit
       });
