@@ -130,6 +130,7 @@ export default function App() {
       });
 
       upload.on('progress', ({percentage, bytesUploaded, bytesTotal}) => {
+      addLog(`Percentage : ${percentage}`)
         setProgress(percentage / 100);
         setBytesUploaded(bytesUploaded);
         setBytesTotal(bytesTotal);
