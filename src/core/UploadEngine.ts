@@ -1,5 +1,3 @@
-import axios from 'axios';
-import type { CancelTokenSource } from 'axios';
 import RNBlobUtil from 'react-native-blob-util';
 import type { ChunkMeta } from '../types';
 import { buildContentRangeHeader, buildChunkList } from './ChunkEngine';
@@ -28,7 +26,11 @@ export interface UploadEngineOptions {
   /** Fired after a chunk is fully acknowledged by the server. */
   onChunkSuccess: (chunkIndex: number, newOffset: number) => void;
 
-  /** Fired after each successful chunk with cumulative byte counts. */
+  /**
+   * Fired continuously as bytes move through the native layer.
+   * Mirrors the web SDK's `xhr.upload.onprogress` — called on every native
+   * progress tick, not just once per completed chunk.
+   */
   onProgress: (bytesUploaded: number, bytesTotal: number) => void;
 }
 
@@ -53,26 +55,25 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-function resumeBytesUploaded(
-  startChunkIndex: number,
-  chunks: ChunkMeta[],
-): number {
-  if (startChunkIndex === 0) return 0;
-  const last = chunks[startChunkIndex - 1];
-  return last ? last.end : 0;
-}
+// function resumeBytesUploaded(
+//   startChunkIndex: number,
+//   chunks: ChunkMeta[],
+// ): number {
+//   if (startChunkIndex === 0) return 0;
+//   const last = chunks[startChunkIndex - 1];
+//   return last ? last.end : 0;
+// }
 
 // ─── UploadEngine ─────────────────────────────────────────────────────────────
 
 export class UploadEngine {
   private readonly _opts: UploadEngineOptions;
-  private _cancelSource: CancelTokenSource | null = null;
   private _abortController: AbortController = new AbortController();
   private _startChunkIndex = 0;
 
   /** 30s stall watchdog — cancels a chunk if no upload progress is reported. */
   private _stallTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly STALL_TIMEOUT_MS = 30_000;
+  private readonly STALL_TIMEOUT_MS = 60_000;
 
   constructor(opts: UploadEngineOptions) {
     this._opts = opts;
@@ -84,7 +85,6 @@ export class UploadEngine {
 
   abort(): void {
     this._abortController.abort();
-    this._cancelSource?.cancel('Upload aborted.');
     this._clearStallWatchdog();
   }
 
@@ -106,7 +106,7 @@ export class UploadEngine {
     } = this._opts;
 
     const chunks = buildChunkList(fileSizeBytes, chunkSizeKB);
-    let bytesUploaded = resumeBytesUploaded(this._startChunkIndex, chunks);
+    // let bytesUploaded = resumeBytesUploaded(this._startChunkIndex, chunks);
 
     for (let i = this._startChunkIndex; i < chunks.length; i++) {
       if (signal.aborted) {
@@ -127,10 +127,9 @@ export class UploadEngine {
         onChunkAttempt(chunk.index, attempt + 1, chunks.length);
 
         try {
-          await this._uploadChunk(chunk, endpoint, fileUri, signal);
+          await this._uploadChunk(chunk, endpoint, fileUri, signal, onProgress);
 
-          bytesUploaded += chunk.end - chunk.start;
-          onProgress(bytesUploaded, fileSizeBytes);
+          // bytesUploaded = chunk.end;
           onChunkSuccess(chunk.index, chunk.end);
           uploaded = true;
 
@@ -187,14 +186,23 @@ export class UploadEngine {
     }
   }
 
+  /**
+   * Resets the stall watchdog.
+   *
+   * Previously this was called once before `RNBlobUtil.fetch` and cleared
+   * after it resolved — so for a 500 MB chunk taking 65 s, the 30 s timer
+   * fired and called `abort()` even though bytes were actively moving through
+   * the native layer.  The fix: call this on every native progress tick so
+   * the timer only fires when bytes genuinely stop moving.
+   */
   private _resetStallWatchdog(): void {
     this._clearStallWatchdog();
     this._stallTimer = setTimeout(() => {
       warn(
         `[FastPix] Upload stalled — no progress for ${this.STALL_TIMEOUT_MS / 1000}s. ` +
-          'Cancelling chunk to retry.',
+          'Aborting chunk to retry.',
       );
-      this._cancelSource?.cancel('Upload stalled — no bytes transferred.');
+      this._abortController.abort();
     }, this.STALL_TIMEOUT_MS);
   }
 
@@ -203,65 +211,78 @@ export class UploadEngine {
     endpoint: string,
     fileUri: string,
     signal: AbortSignal,
+    onProgress: (bytesUploaded: number, bytesTotal: number) => void,
   ): Promise<void> {
-    const base64Data = await this._readChunkAsBase64(fileUri, chunk.start, chunk.end);
+    // Slice the chunk to a temp file so we never pull raw bytes into the JS
+    // heap — avoids the "String length exceeds limit" crash that occurs when
+    // a large chunk (e.g. 500 MB) is read as base64 and then decoded back
+    // to a Uint8Array inside JavaScript.
+    const tempPath = `${RNBlobUtil.fs.dirs.CacheDir}/fastpix_chunk_${chunk.index}_${chunk.start}_${chunk.end}_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2)}`;
 
-    if (signal.aborted) {
-      throw new Error('AbortError');
-    }
-
-    // Decode base64 → binary string → Uint8Array for the axios body.
-    const rawBinary = RNBlobUtil.base64.decode(base64Data);
-    const byteArray = Uint8Array.from(rawBinary, (c) => c.charCodeAt(0));
-
-    this._cancelSource = axios.CancelToken.source();
-    this._resetStallWatchdog();
+    const { fileSizeBytes } = this._opts;
 
     try {
-      await axios.put(endpoint, byteArray, {
-        cancelToken: this._cancelSource.token,
-        signal,
-        timeout: 60_000,
-        headers: {
+      // 1. Write exactly [start, end) bytes to a temp file on disk.
+      await RNBlobUtil.fs.slice(fileUri, tempPath, chunk.start, chunk.end);
+
+      if (signal.aborted) {
+        throw new Error('AbortError');
+      }
+
+      // Arm the watchdog before the transfer begins.  It will be reset on
+      // every native progress tick below, so it only fires when bytes
+      // genuinely stop moving (true stall).
+      this._resetStallWatchdog();
+
+      // 2. Upload the temp file via RNBlobUtil's native HTTP layer.
+      //    The file path never enters JS memory; only the response does.
+      //
+      //    .progress() gives us byte-level upload callbacks from the native
+      //    layer — equivalent to xhr.upload.onprogress in the web SDK.
+      //    We use them for two things:
+      //      a) Reset the stall watchdog so it only fires on a genuine stall.
+      //      b) Fire onProgress continuously so the UI updates in real time
+      //         instead of jumping 0 % → 32 % → 64 % → 100 % at chunk
+      //         boundaries.
+      const response = await RNBlobUtil.fetch(
+        'PUT',
+        endpoint,
+        {
           'Content-Type': 'application/octet-stream',
           'Content-Range': buildContentRangeHeader(chunk),
           'Content-Length': String(chunk.end - chunk.start),
         },
-        // GCS resumable uploads return 308 for every intermediate chunk;
-        // only the final chunk gets 200/201.
-        validateStatus: (status) =>
-          (status >= 200 && status < 300) || status === 308,
+        RNBlobUtil.wrap(tempPath),
+      ).progress({ count: 10 }, (sent: number, _total: number) => {
+        // `sent` is bytes sent for this chunk so far (native layer counter).
+        // Add the chunk's base offset to get a file-level byte position.
+        const cumulativeBytes = chunk.start + sent;
 
-        onUploadProgress: (progressEvent) => {
-          if (progressEvent.loaded > 0) {
-            this._resetStallWatchdog();
-          }
-        },
+        // a) Keep the watchdog alive as long as bytes are moving.
+        this._resetStallWatchdog();
+
+        // b) Emit a progress event with file-level cumulative counts,
+        //    matching the web SDK's xhr.upload.onprogress semantics.
+        onProgress(cumulativeBytes, fileSizeBytes);
       });
+
+      this._clearStallWatchdog();
+
+      const status = response.respInfo.status;
+
+      // GCS resumable uploads return 308 Resume Incomplete for every
+      // intermediate chunk; only the final chunk returns 200/201.
+      const isSuccess = (status >= 200 && status < 300) || status === 308;
+      if (!isSuccess) {
+        throw new Error(
+          `[FastPix] Chunk ${chunk.index} upload failed with HTTP ${status}.`,
+        );
+      }
     } finally {
       this._clearStallWatchdog();
-    }
-  }
-
-  private async _readChunkAsBase64(
-    fileUri: string,
-    start: number,
-    end: number,
-  ): Promise<string> {
-    const tempPath = `${RNBlobUtil.fs.dirs.CacheDir}/fastpix_chunk_${start}_${end}_${Date.now()}_${Math.random()
-      .toString(36)
-      .slice(2)}`;
-
-    try {
-      // 1. Slice out exactly [start, end) into a small temp file.
-      await RNBlobUtil.fs.slice(fileUri, tempPath, start, end);
-
-      // 2. Read the (small) sliced file fully as base64.
-      const base64 = await RNBlobUtil.fs.readFile(tempPath, 'base64');
-
-      return base64;
-    } finally {
-      // 3. Always attempt cleanup, even if slice/readFile threw.
+      // Always clean up the temp file, even on error or abort.
       RNBlobUtil.fs.unlink(tempPath).catch((err: unknown) => {
         warn(`[FastPix] Failed to delete temp chunk file ${tempPath}:`, err);
       });

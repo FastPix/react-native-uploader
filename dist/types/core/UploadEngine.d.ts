@@ -11,7 +11,11 @@ export interface UploadEngineOptions {
     onChunkAttemptFailure: (chunkIndex: number, attemptNumber: number, error: Error) => void;
     /** Fired after a chunk is fully acknowledged by the server. */
     onChunkSuccess: (chunkIndex: number, newOffset: number) => void;
-    /** Fired after each successful chunk with cumulative byte counts. */
+    /**
+     * Fired continuously as bytes move through the native layer.
+     * Mirrors the web SDK's `xhr.upload.onprogress` — called on every native
+     * progress tick, not just once per completed chunk.
+     */
     onProgress: (bytesUploaded: number, bytesTotal: number) => void;
 }
 export interface EngineResult {
@@ -20,7 +24,6 @@ export interface EngineResult {
 }
 export declare class UploadEngine {
     private readonly _opts;
-    private _cancelSource;
     private _abortController;
     private _startChunkIndex;
     /** 30s stall watchdog — cancels a chunk if no upload progress is reported. */
@@ -31,8 +34,16 @@ export declare class UploadEngine {
     abort(): void;
     run(): Promise<EngineResult>;
     private _clearStallWatchdog;
+    /**
+     * Resets the stall watchdog.
+     *
+     * Previously this was called once before `RNBlobUtil.fetch` and cleared
+     * after it resolved — so for a 500 MB chunk taking 65 s, the 30 s timer
+     * fired and called `abort()` even though bytes were actively moving through
+     * the native layer.  The fix: call this on every native progress tick so
+     * the timer only fires when bytes genuinely stop moving.
+     */
     private _resetStallWatchdog;
     private _uploadChunk;
-    private _readChunkAsBase64;
 }
 //# sourceMappingURL=UploadEngine.d.ts.map
