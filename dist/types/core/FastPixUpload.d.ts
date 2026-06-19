@@ -16,7 +16,6 @@ export declare class FastPixUpload {
     /** True when pause() was called by the user (vs auto-paused by network). */
     private _pausedByUser;
     private readonly _stateHistory;
-    private _stateChangeTime;
     constructor(opts: FastPixUploadOptions);
     private _maskUrl;
     private _maskPath;

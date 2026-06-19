@@ -48,7 +48,7 @@ export class FastPixUpload {
 
   private readonly _stateHistory: Array<{ from: UploadState; to: UploadState; at: number }> = [];
   
-  private _stateChangeTime = 0;
+
 
   constructor(opts: FastPixUploadOptions) {
     this._opts = validateAndNormalizeOptions(opts);
@@ -239,33 +239,16 @@ export class FastPixUpload {
   // ─── Private orchestration ───────────────────────────────────────────────────
 
   private async _beginUpload(): Promise<void> {
-    const beginStartTime = Date.now();
-    log('[FastPix:FastPixUpload] _beginUpload() starting', {
-      timestamp: new Date().toISOString(),
-    });
+     this._resolvedEndpoint = await resolveEndpoint(this._opts.endpoint);
 
-    const endpointResolveStart = Date.now();
-    this._resolvedEndpoint = await resolveEndpoint(this._opts.endpoint);
-    this._resolvedFileUri = decodeURIComponent(
+     this._resolvedFileUri = decodeURIComponent(
           this._opts.fileUri.replace(/^file:\/\//, ''),
         );
 
-    const endpointResolveDuration = Date.now() - endpointResolveStart;
-    log('[FastPix:FastPixUpload] Endpoint resolved', {
-      duration: `${endpointResolveDuration}ms`,
-      endpoint: this._maskUrl(this._resolvedEndpoint),
-    });
 
-    const statStartTime = Date.now();
     const stat = await RNBlobUtil.fs.stat(this._resolvedFileUri);
     this._fileSizeBytes = parseInt(String(stat.size), 10);
-    const statDuration = Date.now() - statStartTime;
-    log('[FastPix:FastPixUpload] File stat retrieved', {
-      duration: `${statDuration}ms`,
-      fileUri: this._maskPath(this._opts.fileUri),
-      fileSizeBytes: this._fileSizeBytes,
-      fileSizeMB: (this._fileSizeBytes / (1024 * 1024)).toFixed(2),
-    });
+   
 
     if (!Number.isFinite(this._fileSizeBytes) || this._fileSizeBytes <= 0) {
       throw new Error(
@@ -289,11 +272,6 @@ export class FastPixUpload {
       this._setupNetworkHandling();
     }
 
-    const beginDuration = Date.now() - beginStartTime;
-    log('[FastPix:FastPixUpload] Emitting started event', {
-      duration: `${beginDuration}ms`,
-      fileSize: this._fileSizeBytes,
-    });
 
     this._emitter.emit('started', {
       fileSize: this._fileSizeBytes,
@@ -369,11 +347,26 @@ export class FastPixUpload {
         this._emitter.emit('chunkSuccess', { chunkIndex, offset: newOffset });
       },
 
-      onProgress: (bytesUploaded, bytesTotal) => {
+        onProgress: (sentBytes, chunkStart, chunkEnd, fileSizeBytes, chunkIndex, totalChunks) => {
+        const remainingChunks = totalChunks - chunkIndex;
+        const progressChunkSize = fileSizeBytes - chunkStart;
+        const progressPerChunk =
+          remainingChunks > 0 ? progressChunkSize / fileSizeBytes / remainingChunks : 0;
+        const successfulProgress = chunkStart / fileSizeBytes;
+        const chunkSizeBytes = chunkEnd - chunkStart;
+        const currentChunkPct = chunkSizeBytes > 0 ? sentBytes / chunkSizeBytes : 0;
+        const chunkProgress = currentChunkPct * progressPerChunk;
+        const percentage = Math.min(
+          Math.round((successfulProgress + chunkProgress) * 100),
+          100,
+        );
+
+        const bytesUploaded = Math.min(chunkStart + sentBytes, fileSizeBytes);
+
         this._emitter.emit('progress', {
           bytesUploaded,
-          bytesTotal,
-          percentage: Math.round((bytesUploaded / bytesTotal) * 100),
+          bytesTotal: fileSizeBytes,
+          percentage,
         });
       },
     });
@@ -580,11 +573,8 @@ export class FastPixUpload {
       }
     }
 
-    const stateTransitionTime = Date.now();
-    const timeSinceLastChange = this._stateChangeTime ? stateTransitionTime - this._stateChangeTime : 0;
-
     // Record the transition 
-    const entry = { from: this._state, to: next, at: stateTransitionTime };
+    const entry = { from: this._state, to: next, at: Date.now() };
     this._stateHistory.push(entry);
     if (this._stateHistory.length > 50) {
       this._stateHistory.shift(); // keep the ring buffer bounded
@@ -592,16 +582,6 @@ export class FastPixUpload {
 
     const prev = this._state;
     this._state = next;
-    this._stateChangeTime = stateTransitionTime;
-
-    log('[FastPix:FastPixUpload] State transition', {
-      timestamp: new Date().toISOString(),
-      from: prev,
-      to: next,
-      timeSinceLast: timeSinceLastChange > 0 ? `${timeSinceLastChange}ms` : 'initial',
-      uploadedOffset: this._uploadedOffset,
-      totalBytes: this._fileSizeBytes,
-    });
 
     // emit stateChange for every valid transition.
     this._emitter.emit('stateChange', { from: prev, to: next });
@@ -611,17 +591,6 @@ export class FastPixUpload {
     const message =
       err instanceof Error ? err.message : 'An unexpected error occurred.';
     const canFail = VALID_TRANSITIONS[this._state]?.includes('FAILED') ?? false;
-
-    const stack = err instanceof Error ? err.stack : undefined;
-    log('[FastPix:FastPixUpload] Fatal error occurred', {
-      timestamp: new Date().toISOString(),
-      currentState: this._state,
-      error: message,
-      canTransitionToFailed: canFail,
-      uploadedOffset: this._uploadedOffset,
-      totalBytes: this._fileSizeBytes,
-      stack: stack ? stack.substring(0, 200) : undefined,
-    });
 
     if (canFail) {
       this._transitionTo('FAILED');
