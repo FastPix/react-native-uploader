@@ -23,32 +23,21 @@ const VALID_TRANSITIONS: Readonly<Record<UploadState, readonly UploadState[]>> =
   COMPLETED: ['IDLE'],
 };
 
-// ─── FastPixUpload ────────────────────────────────────────────────────────────
-
 export class FastPixUpload {
   private _state: UploadState = 'IDLE';
 
-  // Internal components
   private readonly _opts: Required<FastPixUploadOptions>;
   private readonly _emitter = new TypedEventEmitter();
   private readonly _networkMonitor = new NetworkMonitor();
   private _engine: UploadEngine | null = null;
 
-  // Upload bookkeeping
-  /** fileUri with file:// scheme stripped — the form RNBlobUtil expects. */
   private _resolvedFileUri = '';
-  /** Resolved upload endpoint URL. */
   private _resolvedEndpoint = '';
-  /** Total file size in bytes, populated at start(). */
   private _fileSizeBytes = 0;
-  /** Byte offset of the last server-acknowledged chunk boundary. */
   private _uploadedOffset = 0;
-  /** True when pause() was called by the user (vs auto-paused by network). */
   private _pausedByUser = false;
 
   private readonly _stateHistory: Array<{ from: UploadState; to: UploadState; at: number }> = [];
-  
-
 
   constructor(opts: FastPixUploadOptions) {
     this._opts = validateAndNormalizeOptions(opts);
@@ -62,7 +51,7 @@ export class FastPixUpload {
       endpoint: this._maskUrl(typeof this._opts.endpoint === 'string' ? this._opts.endpoint : 'factory-function'),
     });
   }
-  
+
   private _maskUrl(url: string): string {
     if (!url || url === 'factory-function') return url;
     try {
@@ -72,50 +61,28 @@ export class FastPixUpload {
       return '[invalid-url]';
     }
   }
-  
+
   private _maskPath(path: string): string {
     if (!path) return path;
     const parts = path.split('/');
     return `.../${parts[parts.length - 1]}`;
   }
 
-  // ─── Public API ─────────────────────────────────────────────────────────────
-
-  on<K extends UploadEventName>(
-    event: K,
-    callback: UploadEventCallback<K>,
-  ): () => void {
+  on<K extends UploadEventName>(event: K, callback: UploadEventCallback<K>): () => void {
     return this._emitter.on(event, callback);
   }
 
-  /** Remove a previously registered event listener. */
-  off<K extends UploadEventName>(
-    event: K,
-    callback: UploadEventCallback<K>,
-  ): void {
+  off<K extends UploadEventName>(event: K, callback: UploadEventCallback<K>): void {
     this._emitter.off(event, callback);
   }
 
   async start(): Promise<void> {
     if (this._state !== 'IDLE') {
-      warn(
-        `[FastPix] start() ignored — current state is "${this._state}". ` +
-          'Call abort() to reset before starting again.',
-      );
-      log('[FastPix:FastPixUpload] start() called in invalid state', {
-        timestamp: new Date().toISOString(),
-        currentState: this._state,
-      });
+      warn(`[FastPix] start() ignored — current state is "${this._state}".`);
       return;
     }
-
-    log('[FastPix:FastPixUpload] start() called', {
-      timestamp: new Date().toISOString(),
-      currentState: this._state,
-    });
-
+    log('[FastPix:FastPixUpload] start() called', { timestamp: new Date().toISOString(), currentState: this._state });
     this._transitionTo('STARTED');
-
     try {
       await this._beginUpload();
     } catch (err) {
@@ -125,24 +92,14 @@ export class FastPixUpload {
 
   pause(): void {
     if (this._state !== 'UPLOADING') {
-      warn(
-        `[FastPix] pause() ignored — current state is "${this._state}".`,
-      );
-      log('[FastPix:FastPixUpload] pause() called in invalid state', {
-        timestamp: new Date().toISOString(),
-        currentState: this._state,
-      });
+      warn(`[FastPix] pause() ignored — current state is "${this._state}".`);
       return;
     }
-
     log('[FastPix:FastPixUpload] pause() called by user', {
       timestamp: new Date().toISOString(),
-      currentState: this._state,
       uploadedOffset: this._uploadedOffset,
       totalBytes: this._fileSizeBytes,
-      progressPercent: Math.round((this._uploadedOffset / this._fileSizeBytes) * 100),
     });
-
     this._pausedByUser = true;
     this._engine?.abort();
     this._transitionTo('PAUSED');
@@ -151,34 +108,16 @@ export class FastPixUpload {
 
   async resume(): Promise<void> {
     if (this._state !== 'PAUSED') {
-      warn(
-        `[FastPix] resume() ignored — current state is "${this._state}".`,
-      );
-      log('[FastPix:FastPixUpload] resume() called in invalid state', {
-        timestamp: new Date().toISOString(),
-        currentState: this._state,
-      });
+      warn(`[FastPix] resume() ignored — current state is "${this._state}".`);
       return;
     }
-
     log('[FastPix:FastPixUpload] resume() called', {
       timestamp: new Date().toISOString(),
-      currentState: this._state,
       resumeFromOffset: this._uploadedOffset,
-      totalBytes: this._fileSizeBytes,
     });
-
     this._pausedByUser = false;
-
     try {
-      const syncStartTime = Date.now();
       await this._syncResumeOffset();
-      const syncDuration = Date.now() - syncStartTime;
-      log('[FastPix:FastPixUpload] Sync complete', {
-        duration: `${syncDuration}ms`,
-        offsetAfterSync: this._uploadedOffset,
-      });
-
       this._transitionTo('RESUMED');
       this._emitter.emit('resume', { fromOffset: this._uploadedOffset });
       await this._continueUpload();
@@ -188,17 +127,12 @@ export class FastPixUpload {
   }
 
   abort(): void {
-    if (this._state === 'IDLE') {
-      return;
-    }
-
+    if (this._state === 'IDLE') return;
     log('[FastPix:FastPixUpload] abort() called', {
       timestamp: new Date().toISOString(),
       currentState: this._state,
       uploadedOffset: this._uploadedOffset,
-      totalBytes: this._fileSizeBytes,
     });
-
     this._engine?.abort();
     this._networkMonitor.stop();
     this._emitter.emit('abort', undefined);
@@ -211,92 +145,55 @@ export class FastPixUpload {
     this._pausedByUser = false;
   }
 
-  get state(): UploadState {
-    return this._state;
-  }
+  get state(): UploadState { return this._state; }
 
   get progress(): UploadProgressSnapshot {
     return {
       state: this._state,
       bytesUploaded: this._uploadedOffset,
       bytesTotal: this._fileSizeBytes,
-      percentage:
-        this._fileSizeBytes > 0
-          ? Math.round((this._uploadedOffset / this._fileSizeBytes) * 100)
-          : 0,
-      currentChunkIndex: chunkIndexForOffset(
-        this._uploadedOffset,
-        this._opts.chunkSize,
-      ),
+      percentage: this._fileSizeBytes > 0
+        ? Math.round((this._uploadedOffset / this._fileSizeBytes) * 100)
+        : 0,
+      currentChunkIndex: chunkIndexForOffset(this._uploadedOffset, this._opts.chunkSize),
     };
   }
-
 
   get stateHistory(): ReadonlyArray<{ from: UploadState; to: UploadState; at: number }> {
     return this._stateHistory;
   }
 
-  // ─── Private orchestration ───────────────────────────────────────────────────
-
   private async _beginUpload(): Promise<void> {
-     this._resolvedEndpoint = await resolveEndpoint(this._opts.endpoint);
-
-     this._resolvedFileUri = decodeURIComponent(
-          this._opts.fileUri.replace(/^file:\/\//, ''),
-        );
-
+    this._resolvedEndpoint = await resolveEndpoint(this._opts.endpoint);
+    this._resolvedFileUri = decodeURIComponent(this._opts.fileUri.replace(/^file:\/\//, ''));
 
     const stat = await RNBlobUtil.fs.stat(this._resolvedFileUri);
     this._fileSizeBytes = parseInt(String(stat.size), 10);
-   
 
     if (!Number.isFinite(this._fileSizeBytes) || this._fileSizeBytes <= 0) {
-      throw new Error(
-        `[FastPix] File is empty or could not be read: ${this._opts.fileUri}`,
-      );
+      throw new Error(`[FastPix] File is empty or could not be read: ${this._opts.fileUri}`);
     }
 
-      if (this._opts.maxFileSize > 0 && this._fileSizeBytes > this._opts.maxFileSize) {
+    if (this._opts.maxFileSize > 0 && this._fileSizeBytes > this._opts.maxFileSize) {
       const fileMB = (this._fileSizeBytes / (1024 * 1024)).toFixed(2);
       const limitMB = (this._opts.maxFileSize / (1024 * 1024)).toFixed(2);
-      throw new Error(
-        `[FastPix] File size ${fileMB} MB exceeds the maximum allowed size of ${limitMB} MB.`,
-      );
+      throw new Error(`[FastPix] File size ${fileMB} MB exceeds the maximum allowed size of ${limitMB} MB.`);
     }
 
-
     if (this._opts.autoHandleNetworkEvents) {
-      log('[FastPix:FastPixUpload] Setting up network handling', {
-        timestamp: new Date().toISOString(),
-      });
+      log('[FastPix:FastPixUpload] Setting up network handling', { timestamp: new Date().toISOString() });
       this._setupNetworkHandling();
     }
 
-
-    this._emitter.emit('started', {
-      fileSize: this._fileSizeBytes,
-      endpoint: this._resolvedEndpoint,
-    });
+    this._emitter.emit('started', { fileSize: this._fileSizeBytes, endpoint: this._resolvedEndpoint });
     this._transitionTo('UPLOADING');
     await this._runEngine(0);
   }
 
   private async _continueUpload(): Promise<void> {
-    log('[FastPix:FastPixUpload] _continueUpload() starting', {
-      timestamp: new Date().toISOString(),
-      uploadedOffset: this._uploadedOffset,
-      chunkSize: this._opts.chunkSize,
-    });
-
     this._transitionTo('UPLOADING');
-    const resumeChunkIndex = chunkIndexForOffset(
-      this._uploadedOffset,
-      this._opts.chunkSize,
-    );
-    log('[FastPix:FastPixUpload] Resuming from chunk', {
-      chunkIndex: resumeChunkIndex,
-      offset: this._uploadedOffset,
-    });
+    const resumeChunkIndex = chunkIndexForOffset(this._uploadedOffset, this._opts.chunkSize);
+    log('[FastPix:FastPixUpload] Resuming from chunk', { chunkIndex: resumeChunkIndex, offset: this._uploadedOffset });
     await this._runEngine(resumeChunkIndex);
   }
 
@@ -318,36 +215,23 @@ export class FastPixUpload {
       retryDelay: this._opts.retryDelay,
 
       onChunkAttempt: (chunkIndex, attemptNumber, totalChunkNumbers) => {
-        log('[FastPix:FastPixUpload] Chunk attempt', {
-          chunkIndex,
-          attemptNumber,
-          totalChunkNumbers,
-        });
+        log('[FastPix:FastPixUpload] Chunk attempt', { chunkIndex, attemptNumber, totalChunkNumbers });
         this._emitter.emit('chunkAttempt', { chunkIndex, attemptNumber, totalChunkNumbers });
       },
 
       onChunkAttemptFailure: (chunkIndex, attemptNumber, error) => {
-        log('[FastPix:FastPixUpload] Chunk attempt failure', {
-          chunkIndex,
-          attemptNumber,
-          error: error.message,
-        });
+        log('[FastPix:FastPixUpload] Chunk attempt failure', { chunkIndex, attemptNumber, error: error.message });
         this._emitter.emit('chunkAttemptFailure', { chunkIndex, attemptNumber, error });
       },
 
       onChunkSuccess: (chunkIndex, newOffset) => {
         this._uploadedOffset = newOffset;
         const progressPercent = Math.round((newOffset / this._fileSizeBytes) * 100);
-        log('[FastPix:FastPixUpload] Chunk success', {
-          chunkIndex,
-          newOffset,
-          totalBytes: this._fileSizeBytes,
-          progressPercent,
-        });
+        log('[FastPix:FastPixUpload] Chunk success', { chunkIndex, newOffset, totalBytes: this._fileSizeBytes, progressPercent });
         this._emitter.emit('chunkSuccess', { chunkIndex, offset: newOffset });
       },
 
-        onProgress: (sentBytes, chunkStart, chunkEnd, fileSizeBytes, chunkIndex, totalChunks) => {
+      onProgress: (sentBytes, chunkStart, chunkEnd, fileSizeBytes, chunkIndex, totalChunks) => {
         const remainingChunks = totalChunks - chunkIndex;
         const progressChunkSize = fileSizeBytes - chunkStart;
         const progressPerChunk =
@@ -356,18 +240,21 @@ export class FastPixUpload {
         const chunkSizeBytes = chunkEnd - chunkStart;
         const currentChunkPct = chunkSizeBytes > 0 ? sentBytes / chunkSizeBytes : 0;
         const chunkProgress = currentChunkPct * progressPerChunk;
-        const percentage = Math.min(
-          Math.round((successfulProgress + chunkProgress) * 100),
-          100,
-        );
+
+        // ── KEY FIX: Math.floor instead of Math.round ────────────────────
+        // Math.round causes values near a .5 boundary to flip between N and
+        // N+1 on consecutive ticks (e.g. 32.48 → 32, then 32.51 → 33, then
+        // 32.49 → 32), making the progress bar visibly oscillate.
+        //
+        // Math.floor means the displayed integer only ever increases.
+        // The web SDK emits a raw float — we floor for a stable integer.
+        // Consumers can display one decimal place if they want smoothness.
+        const rawPercentage = Math.min((successfulProgress + chunkProgress) * 100, 100);
+        const percentage = Math.floor(rawPercentage);
 
         const bytesUploaded = Math.min(chunkStart + sentBytes, fileSizeBytes);
 
-        this._emitter.emit('progress', {
-          bytesUploaded,
-          bytesTotal: fileSizeBytes,
-          percentage,
-        });
+        this._emitter.emit('progress', { bytesUploaded, bytesTotal: fileSizeBytes, percentage });
       },
     });
 
@@ -389,36 +276,20 @@ export class FastPixUpload {
     }
 
     const message = result.error?.message ?? 'Unknown upload error.';
-    const isIntentionalAbort =
-      message.includes('aborted') && this._state === 'PAUSED';
+    const isIntentionalAbort = message.includes('aborted') && this._state === 'PAUSED';
 
     if (isIntentionalAbort) {
-      log('[FastPix:FastPixUpload] Upload paused intentionally', {
-        duration: `${engineDuration}ms`,
-        uploadedOffset: this._uploadedOffset,
-      });
-
+      log('[FastPix:FastPixUpload] Upload paused intentionally', { duration: `${engineDuration}ms`, uploadedOffset: this._uploadedOffset });
       return;
     }
 
-    log('[FastPix:FastPixUpload] Upload failed', {
-      duration: `${engineDuration}ms`,
-      error: message,
-      uploadedOffset: this._uploadedOffset,
-    });
-
+    log('[FastPix:FastPixUpload] Upload failed', { duration: `${engineDuration}ms`, error: message, uploadedOffset: this._uploadedOffset });
     this._transitionTo('FAILED');
-    this._emitter.emit('error', {
-      message,
-      retriable: false,
-      code: 'UPLOAD_FAILED',
-    });
+    this._emitter.emit('error', { message, retriable: false, code: 'UPLOAD_FAILED' });
   }
 
   private _setupNetworkHandling(): void {
-    log('[FastPix:FastPixUpload] Network monitoring started', {
-      timestamp: new Date().toISOString(),
-    });
+    log('[FastPix:FastPixUpload] Network monitoring started', { timestamp: new Date().toISOString() });
     this._networkMonitor.start();
 
     this._networkMonitor.onChange((status) => {
@@ -431,25 +302,14 @@ export class FastPixUpload {
 
       if (status === 'offline') {
         this._emitter.emit('offline', undefined);
-
         if (this._state === 'UPLOADING') {
-          log('[FastPix:FastPixUpload] Auto-pausing due to network offline', {
-            timestamp: new Date().toISOString(),
-            uploadedOffset: this._uploadedOffset,
-          });
           this._engine?.abort();
           this._transitionTo('PAUSED');
           this._emitter.emit('pause', { reason: 'network' });
         }
-
       } else if (status === 'online') {
         this._emitter.emit('online', undefined);
-
         if (this._state === 'PAUSED' && !this._pausedByUser) {
-          log('[FastPix:FastPixUpload] Auto-resuming due to network online', {
-            timestamp: new Date().toISOString(),
-            uploadedOffset: this._uploadedOffset,
-          });
           this.resume().catch((err: unknown) => this._handleFatalError(err));
         }
       }
@@ -457,95 +317,39 @@ export class FastPixUpload {
   }
 
   private async _syncResumeOffset(): Promise<void> {
-    if (!this._resolvedEndpoint) {
-      // Upload hasn't started yet — nothing to sync.
-      log('[FastPix:FastPixUpload] _syncResumeOffset() - no endpoint yet', {
-        timestamp: new Date().toISOString(),
-      });
-      return;
-    }
-
-    const syncStartTime = Date.now();
-    log('[FastPix:FastPixUpload] _syncResumeOffset() starting', {
-      timestamp: new Date().toISOString(),
-      currentOffset: this._uploadedOffset,
-      fileSize: this._fileSizeBytes,
-      endpoint: this._maskUrl(this._resolvedEndpoint),
-    });
+    if (!this._resolvedEndpoint) return;
 
     try {
       const axios = (await import('axios')).default;
-
-      const response = await axios.put(
-        this._resolvedEndpoint,
-        undefined,
-        {
-          headers: {
-            'Content-Range': `bytes */${this._fileSizeBytes}`,
-            'Content-Length': '0',
-          },
-          validateStatus: (s) =>
-            (s >= 200 && s < 300) || s === 308,
-          timeout: 10_000,
+      const response = await axios.put(this._resolvedEndpoint, undefined, {
+        headers: {
+          'Content-Range': `bytes */${this._fileSizeBytes}`,
+          'Content-Length': '0',
         },
-      );
-
-      const syncDuration = Date.now() - syncStartTime;
-      log('[FastPix:FastPixUpload] Sync response received', {
-        duration: `${syncDuration}ms`,
-        status: response.status,
-        contentRange: response.headers?.['content-range'] as string | undefined,
+        validateStatus: (s) => (s >= 200 && s < 300) || s === 308,
+        timeout: 10_000,
       });
 
       if (response.status === 308) {
-        const rangeHeader: string | undefined =
-          response.headers?.['range'] as string | undefined;
-
+        const rangeHeader = response.headers?.['range'] as string | undefined;
         if (rangeHeader) {
           const match = /bytes=0-(\d+)/.exec(rangeHeader);
           if (match?.[1]) {
-            const serverOffset = parseInt(match[1], 10) + 1; 
+            const serverOffset = parseInt(match[1], 10) + 1;
             if (serverOffset !== this._uploadedOffset) {
-              info(
-                `[FastPix] Resume offset corrected: ` +
-                  `local=${this._uploadedOffset} → server=${serverOffset}`,
-              );
-              log('[FastPix:FastPixUpload] Offset mismatch detected and corrected', {
-                localOffset: this._uploadedOffset,
-                serverOffset,
-                difference: serverOffset - this._uploadedOffset,
-              });
+              info(`[FastPix] Resume offset corrected: local=${this._uploadedOffset} → server=${serverOffset}`);
               this._uploadedOffset = serverOffset;
-            } else {
-              log('[FastPix:FastPixUpload] Offset verified with server', {
-                offset: this._uploadedOffset,
-              });
             }
           }
         }
       } else if (response.status >= 200 && response.status < 300) {
-        // Server already has the full file — mark as completed.
-        log('[FastPix:FastPixUpload] Server confirms upload complete', {
-          status: response.status,
-        });
         this._uploadedOffset = this._fileSizeBytes;
         this._transitionTo('COMPLETED');
         this._emitter.emit('success', undefined);
         this._networkMonitor.stop();
       }
     } catch (err) {
-      const syncDuration = Date.now() - syncStartTime;
-      // Non-fatal — log and continue with locally stored offset.
-      warn(
-        '[FastPix] Could not verify resume offset with server. ' +
-          'Continuing from local offset. Error:',
-        err,
-      );
-      log('[FastPix:FastPixUpload] Sync offset failed (non-fatal)', {
-        duration: `${syncDuration}ms`,
-        error: err instanceof Error ? err.message : String(err),
-        offset: this._uploadedOffset,
-      });
+      warn('[FastPix] Could not verify resume offset. Continuing from local offset.', err);
     }
   }
 
@@ -553,18 +357,7 @@ export class FastPixUpload {
     const allowed = VALID_TRANSITIONS[this._state];
 
     if (!allowed.includes(next)) {
-      const msg =
-        `[FastPix] Invalid state transition: ${this._state} → ${next}. ` +
-        `Allowed: ${allowed.join(', ') || 'none'}.`;
-
-      log('[FastPix:FastPixUpload] Invalid state transition attempted', {
-        timestamp: new Date().toISOString(),
-        from: this._state,
-        to: next,
-        allowed,
-      });
-
-      // In RN, __DEV__ is a global boolean set by Metro.
+      const msg = `[FastPix] Invalid state transition: ${this._state} → ${next}. Allowed: ${allowed.join(', ') || 'none'}.`;
       if (typeof __DEV__ !== 'undefined' && __DEV__) {
         throw new Error(msg);
       } else {
@@ -573,32 +366,19 @@ export class FastPixUpload {
       }
     }
 
-    // Record the transition 
     const entry = { from: this._state, to: next, at: Date.now() };
     this._stateHistory.push(entry);
-    if (this._stateHistory.length > 50) {
-      this._stateHistory.shift(); // keep the ring buffer bounded
-    }
+    if (this._stateHistory.length > 50) this._stateHistory.shift();
 
     const prev = this._state;
     this._state = next;
-
-    // emit stateChange for every valid transition.
     this._emitter.emit('stateChange', { from: prev, to: next });
   }
 
   private _handleFatalError(err: unknown): void {
-    const message =
-      err instanceof Error ? err.message : 'An unexpected error occurred.';
+    const message = err instanceof Error ? err.message : 'An unexpected error occurred.';
     const canFail = VALID_TRANSITIONS[this._state]?.includes('FAILED') ?? false;
-
-    if (canFail) {
-      this._transitionTo('FAILED');
-    }
-    this._emitter.emit('error', {
-      message,
-      retriable: false,
-      code: 'UNEXPECTED_ERROR',
-    });
+    if (canFail) this._transitionTo('FAILED');
+    this._emitter.emit('error', { message, retriable: false, code: 'UNEXPECTED_ERROR' });
   }
 }

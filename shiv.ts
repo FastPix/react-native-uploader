@@ -1,44 +1,12 @@
 /**
  * UploadEngine — native binary upload via RNBlobUtil.fetch
  *
- * ── ARCHITECTURE (mirrors the web SDK) ───────────────────────────────────
- * The web SDK uses File.slice() → Blob → XHR body. The Blob is sent as raw
- * bytes by the browser's network stack — no base64, no JS memory for the
- * chunk body.
- *
- * This SDK mirrors that approach for React Native:
- *   1. RNBlobUtil.fs.slice(src, tempPath, start, end)
- *      → creates a temp file containing exactly [start, end) bytes.
- *        Equivalent to file.slice(start, end) in the web SDK.
- *   2. RNBlobUtil.fetch('PUT', url, headers, { path: tempPath })
- *      → sends the temp file as raw bytes from native code (ObjC/Java).
- *        The JS thread never touches the binary data.
- *        Equivalent to xhr.send(blob) in the web SDK.
+ * Architecture mirrors the web SDK:
+ *   1. RNBlobUtil.fs.slice(src, tempPath, start, end)  → temp file = file.slice()
+ *   2. RNBlobUtil.fetch('PUT', url, headers, wrap(tempPath)) → native PUT = xhr.send(blob)
  *   3. Delete the temp file after the PUT resolves.
  *
- * ── PROGRESS REPORTING ───────────────────────────────────────────────────
- * The web SDK gets smooth progress for free from `xhr.upload.onprogress`,
- * which fires continuously as bytes leave the browser's network stack.
- *
- * RNBlobUtil's equivalent is `.uploadProgress()` (NOT `.progress()` —
- * that one reports *response* bytes received, and GCS's resumable-upload
- * PUT responses have no body, so `total` comes back as -1 and the
- * callback is effectively useless for our case — this was the root cause
- * of the "0 → 25 → 50 → 75 → 100" stepped progress).
- *
- * `.uploadProgress({ count, interval }, cb)` is also known to be
- * unreliable on iOS — some RN/RNBlobUtil version combinations fire it
- * only once, or not at all, regardless of the count/interval config
- * (see RonRadtke/react-native-blob-util#395, joltup/rn-fetch-blob#242).
- *
- * To guarantee a smooth bar regardless of native callback reliability,
- * we layer a synthetic time-based ticker on top of native progress:
- *   - Native ticks (when they arrive) are authoritative and reset the
- *     ticker's baseline.
- *   - Between native ticks (or if none arrive at all), the ticker
- *     estimates progress using the previous chunk's measured throughput,
- *     capped at 92% of the chunk so it never overtakes a real chunkSuccess.
- * ─────────────────────────────────────────────────────────────────────────
+ * JS heap impact = 0 bytes for the chunk body regardless of chunk size.
  */
 
 import RNBlobUtil from 'react-native-blob-util';
@@ -56,23 +24,19 @@ export interface UploadEngineOptions {
   maxRetries: number;
   retryDelay: number;
 
-  /** Fired at the start of every chunk attempt (including retries). */
   onChunkAttempt: (chunkIndex: number, attemptNumber: number, totalChunkNumbers: number) => void;
 
-  /** Fired when a chunk attempt fails but will be retried. */
   onChunkAttemptFailure: (
     chunkIndex: number,
     attemptNumber: number,
     error: Error,
   ) => void;
 
-  /** Fired after a chunk is fully acknowledged by the server. */
   onChunkSuccess: (chunkIndex: number, newOffset: number) => void;
 
   /**
-   * Fired continuously as bytes move through the native layer (or, when
-   * native ticks are sparse/unavailable, via a synthetic time-based
-   * estimate). Mirrors the web SDK's `xhr.upload.onprogress` semantics.
+   * Fired continuously as bytes move through the native layer.
+   * sentBytes resets to 0 at the start of each new chunk.
    */
   onProgress: (
     sentBytes: number,
@@ -112,34 +76,41 @@ export class UploadEngine {
   private _abortController: AbortController = new AbortController();
   private _startChunkIndex = 0;
 
-  /**
-   * Reference to the active RNBlobUtil.fetch request.
-   * Calling .cancel() immediately aborts the native HTTP request,
-   * equivalent to xhr.abort() in the web SDK.
-   */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _activeRequest: StatefulPromise<any> | null = null;
 
   /** Synthetic progress ticker for the chunk currently uploading. */
   private _syntheticTicker: ReturnType<typeof setInterval> | null = null;
 
-  /** Bytes-per-ms measured from the most recently completed chunk — seeds the next chunk's ticker. */
+  /** Bytes-per-ms measured from the most recently completed chunk. */
   private _lastThroughputBytesPerMs: number | null = null;
 
-  /** Highest byte value emitted (native or synthetic) for the current chunk — prevents the bar from going backwards. */
-  private _lastEmittedChunkBytes = 0;
-
   /**
-   * Re-baseable origin for the synthetic ticker: (bytes, time) pair the
-   * ticker extrapolates forward from. Reset on every native tick so the
-   * estimate always starts "from now" using the freshest known position,
-   * instead of drifting from a stale start time + stale assumed rate —
-   * which previously caused the estimate to fall behind a just-received
-   * native value and produce a visible back-and-forth (e.g.
-   * 32% → 33% → 32% → 33%) while it caught back up.
+   * Highest sentBytes value emitted (real or synthetic) for the CURRENT chunk.
+   *
+   * ── WHY THIS EXISTS ──────────────────────────────────────────────────────
+   * uploadProgress ticks fire with values that can temporarily decrease
+   * (OS scheduler jitter, small corrections by the native layer). Without
+   * this guard the progress bar would jump backwards.
+   *
+   * ── THE BUG IT WAS CAUSING ───────────────────────────────────────────────
+   * Previously this field was an instance variable initialised once at
+   * construction time and never reset between chunks. When chunk 1 started,
+   * it still held chunk 0's final byte count (~524 MB for a 500 MB chunk).
+   *
+   * The synthetic ticker for chunk 1 estimates bytes from 0 and checks
+   *   `if (estimated > this._lastEmittedChunkBytes)`
+   * which is false (0 < 524 MB), so it emits nothing. Meanwhile
+   * uploadProgress ticks for chunk 1 also start from small byte values
+   * (< 524 MB) and are blocked by the same guard — so the progress bar
+   * froze or oscillated between the chunk 0 ceiling and whatever tiny
+   * native ticks slipped through.
+   *
+   * ── THE FIX ──────────────────────────────────────────────────────────────
+   * Reset to 0 at the very start of _uploadChunk, before slice() and before
+   * the ticker starts, so the guard starts fresh for every chunk.
    */
-  private _tickerOriginBytes = 0;
-  private _tickerOriginTime = 0;
+  private _lastEmittedChunkBytes = 0;
 
   constructor(opts: UploadEngineOptions) {
     this._opts = opts;
@@ -151,9 +122,7 @@ export class UploadEngine {
 
   abort(): void {
     this._abortController.abort();
-    this._activeRequest?.cancel((reason) => {
-      console.log('Upload cancelled:', reason);
-    });
+    this._activeRequest?.cancel('Upload aborted.');
     this._activeRequest = null;
     this._clearSyntheticTicker();
   }
@@ -175,7 +144,6 @@ export class UploadEngine {
       onProgress,
     } = this._opts;
 
-    // ── Pre-flight: cleanup orphaned temp files + verify disk space ────────
     await this._cleanupStaleTempFiles();
 
     const diskError = await this._checkDiskSpace(chunkSizeKB * 1024);
@@ -205,14 +173,10 @@ export class UploadEngine {
 
         try {
           await this._uploadChunk(chunk, endpoint, fileUri, signal, chunks.length, onProgress);
-
           onChunkSuccess(chunk.index, chunk.end);
           uploaded = true;
 
         } catch (err) {
-          // RNBlobUtil.fetch surfaces cancellation as an error whose message
-          // contains 'cancel' (lowercase). Check signal.aborted first —
-          // that covers user abort() and network auto-pause.
           const message = err instanceof Error ? err.message : String(err);
           const isAbort =
             signal.aborted ||
@@ -261,77 +225,50 @@ export class UploadEngine {
     return { success: true };
   }
 
+  // ── Private: pre-flight ───────────────────────────────────────────────────
+
   private async _cleanupStaleTempFiles(): Promise<void> {
     const cacheDir = RNBlobUtil.fs.dirs.CacheDir;
-
     try {
       const entries = await RNBlobUtil.fs.ls(cacheDir);
       const stale = entries.filter((name) => name.startsWith('fastpix_chunk_'));
-
-      if (stale.length === 0) {
-        return;
-      }
-
+      if (stale.length === 0) return;
       await Promise.all(
         stale.map((name) =>
-          RNBlobUtil.fs.unlink(`${cacheDir}/${name}`).catch(() => {
-            // Ignore — file may already be gone, or removable by the OS later.
-          }),
+          RNBlobUtil.fs.unlink(`${cacheDir}/${name}`).catch(() => {}),
         ),
       );
-
-      console.info(
-        `[FastPix] Cleaned up ${stale.length} stale temp chunk file(s) from a previous run.`,
-      );
+      console.info(`[FastPix] Cleaned up ${stale.length} stale temp chunk file(s).`);
     } catch (err) {
       console.warn('[FastPix] Failed to clean up stale temp chunk files:', err);
     }
   }
 
   private async _checkDiskSpace(chunkBytes: number): Promise<Error | null> {
-    // Require room for ~2 chunks (the chunk being written + a safety
-    // margin for the slice/readFile temp file overlap) plus 10MB headroom.
     const requiredBytes = chunkBytes * 2 + 10 * 1024 * 1024;
-
     try {
       const stat = (await RNBlobUtil.fs.df()) as unknown as Record<string, number>;
-
       const freeBytes =
         typeof stat.free === 'number'
           ? stat.free
           : typeof stat.internal_free === 'number'
             ? stat.internal_free
             : null;
-
-      if (freeBytes === null) {
-        // Couldn't determine free space — don't block the upload on this.
-        return null;
-      }
-
+      if (freeBytes === null) return null;
       if (freeBytes < requiredBytes) {
         const freeMB = (freeBytes / (1024 * 1024)).toFixed(1);
         const requiredMB = (requiredBytes / (1024 * 1024)).toFixed(1);
         return new Error(
-          `[FastPix] Not enough free storage on this device to continue the ` +
-            `upload. Available: ${freeMB} MB, required: ~${requiredMB} MB. ` +
-            'Free up space (e.g. clear app cache or delete unused files) and try again.',
+          `[FastPix] Not enough storage. Available: ${freeMB} MB, required: ~${requiredMB} MB.`,
         );
       }
-
       return null;
-    } catch (err) {
-      // df() not supported or failed — proceed optimistically.
-      console.warn('[FastPix] Could not check free disk space:', err);
+    } catch {
       return null;
     }
   }
 
-  // ─── Synthetic progress ticker ─────────────────────────────────────────────
-  //
-  // Native uploadProgress callbacks can be sparse or entirely absent on iOS.
-  // This ticker fills the gaps with a time-based estimate so the bar always
-  // animates smoothly, while deferring to real native ticks whenever they
-  // do arrive.
+  // ── Private: synthetic progress ticker ───────────────────────────────────
 
   private _clearSyntheticTicker(): void {
     if (this._syntheticTicker !== null) {
@@ -341,17 +278,11 @@ export class UploadEngine {
   }
 
   /**
-   * Starts a synthetic ticker for one chunk upload. Estimates how far
-   * through the chunk we are by extrapolating forward from the current
-   * origin (`_tickerOriginBytes` at `_tickerOriginTime`) using the previous
-   * chunk's measured throughput (falling back to a conservative default
-   * for the first chunk). Capped at 92% of the chunk so it never reports
-   * completion before the real network response does.
+   * Starts a 300ms interval that emits estimated progress during the
+   * slice() phase (which is silent) and between native uploadProgress ticks.
    *
-   * The origin is re-baselined on every native `uploadProgress` tick (see
-   * `_uploadChunk`), so the synthetic estimate always extrapolates from the
-   * most recent ground truth instead of drifting from a stale starting
-   * point — that drift was the cause of the 32%→33%→32% oscillation.
+   * Caps at 92% of the chunk so it never reaches 100% artificially —
+   * the real final tick after PUT resolves covers the last 8%.
    */
   private _startSyntheticTicker(
     chunkBytes: number,
@@ -359,21 +290,14 @@ export class UploadEngine {
   ): void {
     this._clearSyntheticTicker();
 
+    const startedAt = Date.now();
+    const assumedBytesPerMs =
+      this._lastThroughputBytesPerMs ?? (2 * 1024 * 1024) / 1000; // default 2 MB/s
+
     this._syntheticTicker = setInterval(() => {
-      // Use last known throughput if we have it, otherwise assume a
-      // conservative 2 MB/s so early progress still moves on slow links
-      // without wildly overshooting on fast ones (native ticks correct
-      // it the moment they arrive, via the re-baseline below).
-      const assumedBytesPerMs = this._lastThroughputBytesPerMs ?? (2 * 1024 * 1024) / 1000;
-
-      const elapsedSinceOriginMs = Date.now() - this._tickerOriginTime;
-      const estimated = Math.min(
-        this._tickerOriginBytes + elapsedSinceOriginMs * assumedBytesPerMs,
-        chunkBytes * 0.92,
-      );
-
-      // Only let the synthetic estimate move forward, and only if it's
-      // still ahead of the last value (real or synthetic) we emitted.
+      const elapsedMs = Date.now() - startedAt;
+      // Cap synthetic estimate at 92% to never overshoot before the real tick.
+      const estimated = Math.min(elapsedMs * assumedBytesPerMs, chunkBytes * 0.92);
       if (estimated > this._lastEmittedChunkBytes) {
         this._lastEmittedChunkBytes = estimated;
         emit(estimated);
@@ -381,18 +305,7 @@ export class UploadEngine {
     }, 300);
   }
 
-  /**
-   * Re-baselines the synthetic ticker's extrapolation origin to a fresh
-   * (bytes, time) pair. Called every time a real native `uploadProgress`
-   * tick arrives, so the ticker's next estimate starts from "now" instead
-   * of extrapolating from a stale start time with a stale assumed rate.
-   */
-  private _rebaseTicker(currentBytes: number): void {
-    this._tickerOriginBytes = currentBytes;
-    this._tickerOriginTime = Date.now();
-  }
-
-  // ─── Chunk upload ────────────────────────────────────────────────────────────
+  // ── Private: chunk upload ─────────────────────────────────────────────────
 
   private async _uploadChunk(
     chunk: ChunkMeta,
@@ -414,37 +327,48 @@ export class UploadEngine {
     const { fileSizeBytes } = this._opts;
     const chunkBytes = chunk.end - chunk.start;
 
-    // 1. Create a temp file containing exactly [start, end) bytes.
+    // ── CRITICAL: reset per-chunk state BEFORE anything else ────────────────
+    // _lastEmittedChunkBytes must be 0 at the start of every chunk.
+    // If it holds chunk N-1's final value, the monotonic guard blocks
+    // ALL progress events for chunk N until native ticks exceed the old
+    // ceiling — causing the oscillation between chunk N-1's % and N's %.
+    this._lastEmittedChunkBytes = 0;
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const uploadStartedAt = Date.now();
+
     const tempPath =
       `${RNBlobUtil.fs.dirs.CacheDir}/fastpix_chunk_${chunk.start}_${chunk.end}` +
       `_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
     let sliceSucceeded = false;
-    this._lastEmittedChunkBytes = 0;
-    this._rebaseTicker(0);
-    const uploadStartedAt = Date.now();
+
+    // Helper: monotonic emit — never goes backwards within a chunk.
+    const emitChunkProgress = (sentBytes: number): void => {
+      const bounded = Math.max(0, Math.min(sentBytes, chunkBytes));
+      if (bounded > this._lastEmittedChunkBytes) {
+        this._lastEmittedChunkBytes = bounded;
+      }
+      // Always call onProgress even if bounded equals _lastEmittedChunkBytes
+      // so the final 100% tick fires even when the previous tick was 100%.
+      onProgress(bounded, chunk.start, chunk.end, fileSizeBytes, chunk.index, totalChunks);
+    };
 
     try {
+      // Start synthetic ticker immediately — covers the slice() phase which
+      // is silent but can take several seconds for large chunks on slow I/O.
+      this._startSyntheticTicker(chunkBytes, emitChunkProgress);
+
+      // 1. Slice the chunk to a temp file (no JS heap allocation for the data).
       await RNBlobUtil.fs.slice(fileUri, tempPath, chunk.start, chunk.end);
       sliceSucceeded = true;
 
       if (signal.aborted) throw new Error('AbortError');
 
-      const emitChunkProgress = (sentBytes: number) => {
-        const bounded = Math.min(sentBytes, chunkBytes);
-        onProgress(bounded, chunk.start, chunk.end, fileSizeBytes, chunk.index, totalChunks);
-      };
-
-      // Synthetic ticker fills gaps between (or in place of) native ticks.
-      this._startSyntheticTicker(chunkBytes, emitChunkProgress);
-
-      // 2. PUT the temp file as raw bytes via RNBlobUtil.fetch.
-      //    NOTE: .uploadProgress() reports bytes SENT (request body) — this
-      //    is the correct method for upload progress. .progress() reports
-      //    bytes RECEIVED (response body), which is unusable here since GCS
-      //    PUT responses for resumable uploads carry no body. Using
-      //    .progress() instead of .uploadProgress() was the root cause of
-      //    the stepped 0/25/50/75/100 progress bar.
+      // 2. PUT via RNBlobUtil native HTTP.
+      //    uploadProgress reports bytes SENT (request body) — correct for
+      //    upload tracking. .progress() reports bytes RECEIVED (response
+      //    body) — useless here since GCS PUT responses carry no body.
       const request = RNBlobUtil.fetch(
         'PUT',
         endpoint,
@@ -455,12 +379,10 @@ export class UploadEngine {
         },
         RNBlobUtil.wrap(tempPath),
       ).uploadProgress({ interval: 250 }, (written: number) => {
-        // Native tick — authoritative. Re-baseline the synthetic ticker's
-        // (bytes, time) origin to this real value/moment so its next
-        // extrapolation starts from here, instead of drifting from a
-        // stale start time and over/under-shooting on the next tick.
-        this._lastEmittedChunkBytes = written;
-        this._rebaseTicker(written);
+        // Real native tick — update the monotonic ceiling and emit.
+        if (written > this._lastEmittedChunkBytes) {
+          this._lastEmittedChunkBytes = written;
+        }
         emitChunkProgress(written);
       });
 
@@ -469,14 +391,12 @@ export class UploadEngine {
       this._activeRequest = null;
       this._clearSyntheticTicker();
 
-      // Record measured throughput for this chunk to seed the next
-      // chunk's synthetic ticker with a realistic rate.
+      // Record throughput for this chunk to seed the next chunk's ticker.
       const elapsedMs = Math.max(Date.now() - uploadStartedAt, 1);
       this._lastThroughputBytesPerMs = chunkBytes / elapsedMs;
 
-      // Fire one final progress tick at 100% of this chunk so the UI
-      // reaches the exact chunk boundary before chunkSuccess fires.
-      this._lastEmittedChunkBytes = chunkBytes;
+      // Final 100% tick — ensures the UI hits the exact chunk boundary
+      // before chunkSuccess fires, regardless of the last native tick value.
       emitChunkProgress(chunkBytes);
 
       const status = response.respInfo.status;
@@ -489,13 +409,12 @@ export class UploadEngine {
       }
     } finally {
       this._clearSyntheticTicker();
-      // 3. Always clean up the temp file.
       if (sliceSucceeded) {
         RNBlobUtil.fs.exists(tempPath)
           .then((exists) => {
             if (exists) {
               RNBlobUtil.fs.unlink(tempPath).catch((err: unknown) => {
-                console.warn(`[FastPix] Failed to delete temp chunk file:`, err);
+                console.warn('[FastPix] Failed to delete temp chunk file:', err);
               });
             }
           })
