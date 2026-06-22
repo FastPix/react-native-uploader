@@ -12,7 +12,7 @@
 import RNBlobUtil from 'react-native-blob-util';
 import type { StatefulPromise } from 'react-native-blob-util';
 import type { ChunkMeta } from '../types';
-import { buildContentRangeHeader, buildChunkList } from './ChunkEngine';
+import { buildContentRangeHeader, buildChunkListFromOffset } from './ChunkEngine';
 
 // ─── Public interfaces ────────────────────────────────────────────────────────
 
@@ -74,7 +74,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 export class UploadEngine {
   private readonly _opts: UploadEngineOptions;
   private _abortController: AbortController = new AbortController();
-  private _startChunkIndex = 0;
+  private _startOffset = 0;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _activeRequest: StatefulPromise<any> | null = null;
@@ -116,8 +116,8 @@ export class UploadEngine {
     this._opts = opts;
   }
 
-  setStartChunkIndex(index: number): void {
-    this._startChunkIndex = index;
+  setStartOffset(offset: number): void {
+    this._startOffset = Math.max(0, offset);
   }
 
   abort(): void {
@@ -151,9 +151,9 @@ export class UploadEngine {
       return { success: false, error: diskError };
     }
 
-    const chunks = buildChunkList(fileSizeBytes, chunkSizeKB);
+    const chunks = buildChunkListFromOffset(fileSizeBytes, chunkSizeKB,this._startOffset);
 
-    for (let i = this._startChunkIndex; i < chunks.length; i++) {
+    for (let i = 0; i < chunks.length; i++) {
       if (signal.aborted) {
         return { success: false, error: new Error('Upload was aborted.') };
       }
@@ -346,29 +346,39 @@ export class UploadEngine {
     // Helper: monotonic emit — never goes backwards within a chunk.
     const emitChunkProgress = (sentBytes: number): void => {
       const bounded = Math.max(0, Math.min(sentBytes, chunkBytes));
-      if (bounded > this._lastEmittedChunkBytes) {
-        this._lastEmittedChunkBytes = bounded;
+
+      // Never allow progress to go backward within a chunk.
+      if (bounded < this._lastEmittedChunkBytes) {
+        return;
       }
-      // Always call onProgress even if bounded equals _lastEmittedChunkBytes
-      // so the final 100% tick fires even when the previous tick was 100%.
-      onProgress(this._lastEmittedChunkBytes, chunk.start, chunk.end, fileSizeBytes, chunk.index, totalChunks);
+
+      this._lastEmittedChunkBytes = bounded;
+
+      onProgress(
+        bounded,
+        chunk.start,
+        chunk.end,
+        fileSizeBytes,
+        chunk.index,
+        totalChunks,
+      );
     };
 
     try {
-      // Start synthetic ticker immediately — covers the slice() phase which
-      // is silent but can take several seconds for large chunks on slow I/O.
+      // Start synthetic ticker only for the slice() phase, which is otherwise silent.
       this._startSyntheticTicker(chunkBytes, emitChunkProgress);
 
-      // 1. Slice the chunk to a temp file (no JS heap allocation for the data).
+      // 1. Slice the chunk to a temp file.
       await RNBlobUtil.fs.slice(fileUri, tempPath, chunk.start, chunk.end);
       sliceSucceeded = true;
+
+      // IMPORTANT: once slice is done, stop synthetic progress.
+      // From this point onward, only real native upload progress should drive updates.
+      this._clearSyntheticTicker();
 
       if (signal.aborted) throw new Error('AbortError');
 
       // 2. PUT via RNBlobUtil native HTTP.
-      //    uploadProgress reports bytes SENT (request body) — correct for
-      //    upload tracking. .progress() reports bytes RECEIVED (response
-      //    body) — useless here since GCS PUT responses carry no body.
       const request = RNBlobUtil.fetch(
         'PUT',
         endpoint,
@@ -379,10 +389,6 @@ export class UploadEngine {
         },
         RNBlobUtil.wrap(tempPath),
       ).uploadProgress({ interval: 250 }, (written: number) => {
-        // Real native tick — update the monotonic ceiling and emit.
-        if (written > this._lastEmittedChunkBytes) {
-          this._lastEmittedChunkBytes = written;
-        }
         emitChunkProgress(written);
       });
 

@@ -10,6 +10,8 @@ export declare class FastPixUpload {
     private _fileSizeBytes;
     private _uploadedOffset;
     private _pausedByUser;
+    private _liveBytesUploaded;
+    private _livePercentage;
     private readonly _stateHistory;
     constructor(opts: FastPixUploadOptions);
     private _maskUrl;

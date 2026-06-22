@@ -31,7 +31,7 @@ export interface EngineResult {
 export declare class UploadEngine {
     private readonly _opts;
     private _abortController;
-    private _startChunkIndex;
+    private _startOffset;
     private _activeRequest;
     /** Synthetic progress ticker for the chunk currently uploading. */
     private _syntheticTicker;
@@ -64,7 +64,7 @@ export declare class UploadEngine {
      */
     private _lastEmittedChunkBytes;
     constructor(opts: UploadEngineOptions);
-    setStartChunkIndex(index: number): void;
+    setStartOffset(offset: number): void;
     abort(): void;
     run(): Promise<EngineResult>;
     private _cleanupStaleTempFiles;

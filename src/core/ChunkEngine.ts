@@ -2,18 +2,11 @@ import { log } from '../logger';
 import type { ChunkMeta } from '../types';
 import { MIN_CHUNK_SIZE_KB } from '../utils/validation';
 
-export function buildChunkList(
+export function buildChunkListFromOffset(
   fileSizeBytes: number,
   chunkSizeKB: number,
+ resumeOffset: number = 0,
 ): ChunkMeta[] {
-  log('[FastPix:ChunkEngine] buildChunkList() called', {
-    timestamp: new Date().toISOString(),
-    fileSizeBytes,
-    fileSizeMB: (fileSizeBytes / (1024 * 1024)).toFixed(2),
-    chunkSizeKB,
-    chunkSizeMB: (chunkSizeKB / 1024).toFixed(2),
-  });
-
   if (fileSizeBytes <= 0) {
     throw new Error('[FastPix] File size must be greater than 0 bytes.');
   }
@@ -26,28 +19,31 @@ export function buildChunkList(
     );
   }
 
+  if (resumeOffset < 0 || resumeOffset > fileSizeBytes) {
+    throw new Error('[FastPix] Invalid resume offset.');
+  }
+
   const chunks: ChunkMeta[] = [];
-  let offset = 0;
-  let index = 0;
+
+  let offset = resumeOffset;
+  let index = Math.floor(resumeOffset / chunkSizeBytes);
 
   while (offset < fileSizeBytes) {
-    const end = Math.min(offset + chunkSizeBytes, fileSizeBytes);
+    const nextBoundary =
+      Math.floor(offset / chunkSizeBytes) * chunkSizeBytes + chunkSizeBytes;
+
+    const end = Math.min(nextBoundary, fileSizeBytes);
+
     chunks.push({
       index,
       start: offset,
       end,
       totalSize: fileSizeBytes,
     });
+
     offset = end;
     index += 1;
   }
-
-  log('[FastPix:ChunkEngine] Chunk list created', {
-    totalChunks: chunks.length,
-    firstChunkSize: chunks[0] ? chunks[0].end - chunks[0].start : 0,
-    lastChunkSize: chunks[chunks.length - 1] ? chunks[chunks.length - 1].end - chunks[chunks.length - 1].start : 0,
-    totalBytes: fileSizeBytes,
-  });
 
   return chunks;
 }

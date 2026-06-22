@@ -37,6 +37,9 @@ export class FastPixUpload {
   private _uploadedOffset = 0;
   private _pausedByUser = false;
 
+  private _liveBytesUploaded = 0;
+  private _livePercentage = 0;
+
   private readonly _stateHistory: Array<{ from: UploadState; to: UploadState; at: number }> = [];
 
   constructor(opts: FastPixUploadOptions) {
@@ -148,14 +151,24 @@ export class FastPixUpload {
   get state(): UploadState { return this._state; }
 
   get progress(): UploadProgressSnapshot {
+    const bytesUploaded =
+      this._state === 'UPLOADING' || this._state === 'RESUMED'
+        ? this._liveBytesUploaded
+        : this._uploadedOffset;
+
+    const percentage =
+      this._state === 'UPLOADING' || this._state === 'RESUMED'
+        ? this._livePercentage
+        : this._fileSizeBytes > 0
+          ? Math.floor((this._uploadedOffset / this._fileSizeBytes) * 100)
+          : 0;
+
     return {
       state: this._state,
-      bytesUploaded: this._uploadedOffset,
+      bytesUploaded,
       bytesTotal: this._fileSizeBytes,
-      percentage: this._fileSizeBytes > 0
-        ? Math.round((this._uploadedOffset / this._fileSizeBytes) * 100)
-        : 0,
-      currentChunkIndex: chunkIndexForOffset(this._uploadedOffset, this._opts.chunkSize),
+      percentage,
+      currentChunkIndex: chunkIndexForOffset(bytesUploaded, this._opts.chunkSize),
     };
   }
 
@@ -192,15 +205,16 @@ export class FastPixUpload {
 
   private async _continueUpload(): Promise<void> {
     this._transitionTo('UPLOADING');
-    const resumeChunkIndex = chunkIndexForOffset(this._uploadedOffset, this._opts.chunkSize);
-    log('[FastPix:FastPixUpload] Resuming from chunk', { chunkIndex: resumeChunkIndex, offset: this._uploadedOffset });
-    await this._runEngine(resumeChunkIndex);
+      log('[FastPix:FastPixUpload] Resuming from byte offset', {
+        offset: this._uploadedOffset,
+      });
+    await this._runEngine(this._uploadedOffset);
   }
 
-  private async _runEngine(startChunkIndex: number): Promise<void> {
+  private async _runEngine(startOffset: number): Promise<void> {
     log('[FastPix:FastPixUpload] _runEngine() initialized', {
       timestamp: new Date().toISOString(),
-      startChunkIndex,
+      startOffset,
       fileSize: this._fileSizeBytes,
       chunkSize: this._opts.chunkSize,
     });
@@ -226,39 +240,29 @@ export class FastPixUpload {
 
       onChunkSuccess: (chunkIndex, newOffset) => {
         this._uploadedOffset = newOffset;
+        this._liveBytesUploaded = newOffset;
+        this._livePercentage = Math.floor((newOffset / this._fileSizeBytes) * 100);
         const progressPercent = Math.round((newOffset / this._fileSizeBytes) * 100);
         log('[FastPix:FastPixUpload] Chunk success', { chunkIndex, newOffset, totalBytes: this._fileSizeBytes, progressPercent });
         this._emitter.emit('chunkSuccess', { chunkIndex, offset: newOffset });
       },
 
-      onProgress: (sentBytes, chunkStart, chunkEnd, fileSizeBytes, chunkIndex, totalChunks) => {
-        const remainingChunks = totalChunks - chunkIndex;
-        const progressChunkSize = fileSizeBytes - chunkStart;
-        const progressPerChunk =
-          remainingChunks > 0 ? progressChunkSize / fileSizeBytes / remainingChunks : 0;
-        const successfulProgress = chunkStart / fileSizeBytes;
-        const chunkSizeBytes = chunkEnd - chunkStart;
-        const currentChunkPct = chunkSizeBytes > 0 ? sentBytes / chunkSizeBytes : 0;
-        const chunkProgress = currentChunkPct * progressPerChunk;
-
-        // ── KEY FIX: Math.floor instead of Math.round ────────────────────
-        // Math.round causes values near a .5 boundary to flip between N and
-        // N+1 on consecutive ticks (e.g. 32.48 → 32, then 32.51 → 33, then
-        // 32.49 → 32), making the progress bar visibly oscillate.
-        //
-        // Math.floor means the displayed integer only ever increases.
-        // The web SDK emits a raw float — we floor for a stable integer.
-        // Consumers can display one decimal place if they want smoothness.
-        const rawPercentage = Math.min((successfulProgress + chunkProgress) * 100, 100);
-        const percentage = Math.floor(rawPercentage);
-
+      onProgress: (sentBytes, chunkStart, _chunkEnd, fileSizeBytes) => {
         const bytesUploaded = Math.min(chunkStart + sentBytes, fileSizeBytes);
+        const percentage = Math.floor((bytesUploaded / fileSizeBytes) * 100);
 
-        this._emitter.emit('progress', { bytesUploaded, bytesTotal: fileSizeBytes, percentage });
+        this._liveBytesUploaded = bytesUploaded;
+        this._livePercentage = percentage;
+
+        this._emitter.emit('progress', {
+          bytesUploaded,
+          bytesTotal: fileSizeBytes,
+          percentage,
+        });
       },
     });
 
-    this._engine.setStartChunkIndex(startChunkIndex);
+    this._engine.setStartOffset(startOffset);
 
     const result = await this._engine.run();
     const engineDuration = Date.now() - engineStartTime;
@@ -317,39 +321,58 @@ export class FastPixUpload {
   }
 
   private async _syncResumeOffset(): Promise<void> {
-    if (!this._resolvedEndpoint) return;
+    if (!this._resolvedEndpoint || this._fileSizeBytes <= 0) return;
 
     try {
-      const axios = (await import('axios')).default;
-      const response = await axios.put(this._resolvedEndpoint, undefined, {
+      const response = await fetch(this._resolvedEndpoint, {
+        method: 'PUT',
         headers: {
           'Content-Range': `bytes */${this._fileSizeBytes}`,
           'Content-Length': '0',
         },
-        validateStatus: (s) => (s >= 200 && s < 300) || s === 308,
-        timeout: 10_000,
       });
 
+      // 308 = resumable upload incomplete, server tells us uploaded range
       if (response.status === 308) {
-        const rangeHeader = response.headers?.['range'] as string | undefined;
+        const rangeHeader =
+          response.headers.get('range') ?? response.headers.get('Range');
+
         if (rangeHeader) {
-          const match = /bytes=0-(\d+)/.exec(rangeHeader);
+          const match = /bytes=0-(\d+)/i.exec(rangeHeader);
           if (match?.[1]) {
             const serverOffset = parseInt(match[1], 10) + 1;
-            if (serverOffset !== this._uploadedOffset) {
-              info(`[FastPix] Resume offset corrected: local=${this._uploadedOffset} → server=${serverOffset}`);
-              this._uploadedOffset = serverOffset;
+
+            if (Number.isFinite(serverOffset) && serverOffset >= 0) {
+              if (serverOffset !== this._uploadedOffset) {
+                info(
+                  `[FastPix] Resume offset corrected: local=${this._uploadedOffset} → server=${serverOffset}`,
+                );
+                this._uploadedOffset = serverOffset;
+              }
             }
           }
         }
-      } else if (response.status >= 200 && response.status < 300) {
+
+        return;
+      }
+
+      // Upload already complete
+      if (response.status >= 200 && response.status < 300) {
         this._uploadedOffset = this._fileSizeBytes;
         this._transitionTo('COMPLETED');
         this._emitter.emit('success', undefined);
         this._networkMonitor.stop();
+        return;
       }
+
+      warn(
+        `[FastPix] Resume probe returned unexpected status ${response.status}. Continuing from local offset ${this._uploadedOffset}.`,
+      );
     } catch (err) {
-      warn('[FastPix] Could not verify resume offset. Continuing from local offset.', err);
+      warn(
+        '[FastPix] Could not verify resume offset. Continuing from local offset.',
+        err,
+      );
     }
   }
 
