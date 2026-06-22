@@ -12,6 +12,7 @@ import type {
   UploadProgressSnapshot,
 } from '../types';
 import { info, log, warn } from '../logger';
+import { SDK_CONFIG } from '../config';
 
 const VALID_TRANSITIONS: Readonly<Record<UploadState, readonly UploadState[]>> = {
   IDLE:      ['STARTED'],
@@ -44,6 +45,7 @@ export class FastPixUpload {
 
   constructor(opts: FastPixUploadOptions) {
     this._opts = validateAndNormalizeOptions(opts);
+    SDK_CONFIG.enableLogs = !!this._opts.enableLogs;
     log('[FastPix:FastPixUpload] Constructor initialized', {
       timestamp: new Date().toISOString(),
       chunkSize: this._opts.chunkSize,

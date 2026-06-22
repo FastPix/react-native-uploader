@@ -97,6 +97,8 @@ export interface FastPixUploadOptions {
   maxFileSize?: number;
 
   autoHandleNetworkEvents?: boolean;
+
+  enableLogs?: boolean;
 }
 
 // ─── Chunk Metadata ───────────────────────────────────────────────────────────
