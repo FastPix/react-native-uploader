@@ -1,4 +1,4 @@
-import { warn } from '../logger';
+import { warn } from '../utils/logger';
 import type {
   UploadEventName,
   UploadEventCallback,
@@ -6,7 +6,6 @@ import type {
 } from '../types';
 
 export class TypedEventEmitter {
-  // Map from event name → set of registered callbacks
   private readonly _listeners: Partial<{
     [K in UploadEventName]: Set<UploadEventCallback<K>>;
   }> = {};
@@ -16,9 +15,7 @@ export class TypedEventEmitter {
     callback: UploadEventCallback<K>,
   ): () => void {
     if (!this._listeners[event]) {
-      // Cast required because TypeScript cannot narrow the generic K inside
-      // a Partial mapped type without an explicit cast.
-      (this._listeners as Record<K, Set<UploadEventCallback<K>>>)[event] =
+           (this._listeners as Record<K, Set<UploadEventCallback<K>>>)[event] =
         new Set();
     }
 
@@ -29,7 +26,6 @@ export class TypedEventEmitter {
     return () => this.off(event, callback);
   }
 
-  /** Remove a previously registered listener. */
   off<K extends UploadEventName>(
     event: K,
     callback: UploadEventCallback<K>,
@@ -64,7 +60,7 @@ export class TypedEventEmitter {
     });
   }
 
-  /** Remove all listeners – called by `abort()` to prevent memory leaks. */
+  // Remove all listeners – called by `abort()` to prevent memory leaks
   removeAllListeners(): void {
     for (const key of Object.keys(this._listeners) as UploadEventName[]) {
       delete this._listeners[key];

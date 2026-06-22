@@ -12,9 +12,6 @@
     "node_modules",
     "lib",
     "example",
-    "**/__tests__/*",
-    "**/*.test.ts",
-    "**/*.test.tsx",
-    "**/*.spec.ts"
+    "__tests__",
   ]
 }

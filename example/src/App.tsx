@@ -1,6 +1,4 @@
 import React, {useEffect, useRef, useState} from 'react';
-import RNFS from 'react-native-fs';
-import RNBlobUtil from 'react-native-blob-util';
 import {
   SafeAreaView,
   View,
@@ -9,12 +7,10 @@ import {
   StyleSheet,
   ScrollView,
   TextInput,
-  Platform,
 } from 'react-native';
 import {launchImageLibrary} from 'react-native-image-picker';
 import NetInfo from '@react-native-community/netinfo';
 import {FastPixUpload} from 'react-native-uploads';
-
 import ApiService from './Services/ApiService';
 
 type LogType = 'info' | 'success' | 'warning' | 'error';
@@ -86,31 +82,18 @@ export default function App() {
       const asset = result.assets?.[0];
 
       if (!asset?.uri) {
-        addLog('No file selected', 'warning');
         return;
       }
 
       setFileInfo(asset);
-      addLog(`Selected file: ${asset.fileName}`, 'success');
-      console.log(asset);
 
       setUploadState('Getting Upload URL');
 
       const uploadDetails = await ApiService.createDirectUpload();
 
       if (!uploadDetails?.url) {
-        addLog('Failed to get upload URL', 'error');
         return;
       }
-
-      addLog(`Upload ID: ${uploadDetails.uploadId}`);
-
-      addLog('Entering to uploading phase...');
-
-      console.log('Original asset uri:', asset.uri);
-      console.log('Final uri passed to SDK:', asset.uri);
-
-      addLog(`Chunk Size: ${chunkSize}`);
 
       const upload = new FastPixUpload({
         endpoint: uploadDetails.url,
@@ -119,18 +102,16 @@ export default function App() {
         maxRetries: maxRetries.trim() ? Number(maxRetries) : undefined,
         retryDelay: retryDelay.trim() ? Number(retryDelay) : undefined,
         autoHandleNetworkEvents: true,
-        // maxFileSize: 5 * 1024 * 1024 // 100 MB Limit
+        maxFileSize: 5 * 1024 * 1024 // 100 MB Limit
       });
 
       setUploadRef(upload);
 
       upload.on('started', ({fileSize}) => {
         setUploadState('Uploading');
-        addLog(`Upload Started (${formatBytes(fileSize)})`, 'success');
       });
 
       upload.on('progress', ({percentage, bytesUploaded, bytesTotal}) => {
-      addLog(`Percentage : ${percentage}`)
         setProgress(percentage / 100);
         setBytesUploaded(bytesUploaded);
         setBytesTotal(bytesTotal);
@@ -155,58 +136,48 @@ export default function App() {
 
       upload.on('stateChange', ({from, to}) => {
         setUploadState(to);
-        addLog(`State Changed: ${from} → ${to}`);
       });
 
       upload.on('chunkAttempt', ({chunkIndex, attemptNumber, totalChunkNumbers}) => {
-        addLog(`Chunk ${chunkIndex} / ${totalChunkNumbers}, Attempt ${attemptNumber}`);
+      
       });
 
       upload.on('chunkAttemptFailure', ({chunkIndex, attemptNumber, error}) => {
         setChunkRetries(prev => prev + 1);
-        addLog(`Chunk ${chunkIndex} Retry ${attemptNumber}: ${error.message}`, 'warning');
       });
 
       upload.on('chunkSuccess', ({chunkIndex}) => {
         setChunkSuccess(prev => prev + 1);
-        addLog(`Chunk ${chunkIndex} Uploaded`, 'success');
       });
 
       upload.on('success', () => {
         setUploadState('Completed');
-        addLog('Upload Completed Successfully', 'success');
-
       });
 
       upload.on('error', ({message}) => {
         setFailures(prev => prev + 1);
         setUploadState('Failed');
-        addLog(message, 'error');
       });
 
       upload.on('pause', ({reason}) => {
         setUploadState('Paused');
-        addLog(`Paused (${reason})`, 'warning');
       });
 
       upload.on('resume', ({fromOffset}) => {
         setUploadState('Uploading');
-        addLog(`Resumed from ${fromOffset}`, 'success');
       });
 
       upload.on('abort', () => {
         setUploadState('Aborted');
-        addLog('Upload aborted.', 'warning');
       });
 
-      upload.on('offline', () => addLog('Network Offline', 'warning'));
-      upload.on('online', () => addLog('Network Online', 'success'));
+      upload.on('offline', () => {});
+      upload.on('online', () => {});
 
-      // ── Step 7: start ─────────────────────────────────────────────────────
       await upload.start();
 
     } catch (error: any) {
-      addLog(error?.message ?? 'Unknown error occurred', 'error');
+      // error
     }
   };
 
@@ -281,8 +252,6 @@ export default function App() {
           <Text>
             {formatBytes(bytesUploaded)} / {formatBytes(bytesTotal)}
           </Text>
-          {/* <Text>Speed: {speed}</Text>
-          <Text>ETA: {eta}</Text> */}
         </View>
 
         {/* Buttons */}

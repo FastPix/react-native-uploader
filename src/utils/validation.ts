@@ -1,12 +1,13 @@
-import { log } from '../logger';
+import { log } from '../utils/logger';
 import type { FastPixUploadOptions } from '../types';
 
 /** Minimum chunk size allowed: 5 MB expressed in KB. */
 export const MIN_CHUNK_SIZE_KB = 5 * 1024;
 
-export const MAX_CHUNK_SIZE_KB = 500 * 1024; // 500 MB in KB
+/** Maximum chunk size allowed: 5 MB expressed in KB. */
+export const MAX_CHUNK_SIZE_KB = 500 * 1024;
 
-/** Default chunk size: 5 MB in KB (same as web SDK minimum). */
+/** Default chunk size: 5 MB in KB. */
 export const DEFAULT_CHUNK_SIZE_KB = 5 * 1024;
 
 /** Default maximum retry attempts per chunk. */
@@ -28,7 +29,7 @@ export function validateAndNormalizeOptions(
     throw new Error('[FastPix] Options object is required.');
   }
 
-  // ── endpoint ────────────────────────────────────────────────────────────
+  // endpoint
   if (!opts.endpoint) {
     throw new Error(
       '[FastPix] "endpoint" is required. Provide a signed upload URL or ' +
@@ -44,7 +45,7 @@ export function validateAndNormalizeOptions(
     );
   }
 
-  // ── fileUri ─────────────────────────────────────────────────────────────
+  // fileUri
   if (!opts.fileUri || typeof opts.fileUri !== 'string') {
     throw new Error(
       '[FastPix] "fileUri" is required and must be a string ' +
@@ -52,7 +53,7 @@ export function validateAndNormalizeOptions(
     );
   }
 
-  // ── chunkSize ────────────────────────────────────────────────────────────
+  // chunkSize 
   const chunkSize = opts.chunkSize ?? DEFAULT_CHUNK_SIZE_KB;
   if (typeof chunkSize !== 'number' || !Number.isFinite(chunkSize)) {
     throw new Error('[FastPix] "chunkSize" must be a finite number (in KB).');
@@ -70,7 +71,7 @@ export function validateAndNormalizeOptions(
     );
   }
 
-  // ── maxRetries ───────────────────────────────────────────────────────────
+  // maxRetries
   const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
   if (!Number.isInteger(maxRetries) || maxRetries < 0) {
     throw new Error(
@@ -78,7 +79,7 @@ export function validateAndNormalizeOptions(
     );
   }
 
-  // ── retryDelay ───────────────────────────────────────────────────────────
+  // retryDelay
   const retryDelay = opts.retryDelay ?? DEFAULT_RETRY_DELAY_MS;
   if (typeof retryDelay !== 'number' || retryDelay < 0) {
     throw new Error(
@@ -87,6 +88,8 @@ export function validateAndNormalizeOptions(
   }
 
   const autoHandleNetworkEvents = opts.autoHandleNetworkEvents ?? true;
+
+  const enableLogs = opts.enableLogs ?? false;
 
   const maxFileSize = opts.maxFileSize ?? 0; // 0 = no limit
   if (typeof maxFileSize !== 'number' || maxFileSize < 0) {
@@ -105,6 +108,7 @@ export function validateAndNormalizeOptions(
     retryDelay,
     maxFileSize,
     autoHandleNetworkEvents,
+    enableLogs
   };
 
   log('[FastPix:validation] Options normalized successfully', {
@@ -115,6 +119,7 @@ export function validateAndNormalizeOptions(
     maxRetries,
     retryDelay,
     autoHandleNetworkEvents,
+    enableLogs
   });
 
   return normalized;

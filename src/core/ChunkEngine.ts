@@ -1,5 +1,5 @@
-import { log } from '../logger';
 import type { ChunkMeta } from '../types';
+import { log } from '../utils/logger';
 import { MIN_CHUNK_SIZE_KB } from '../utils/validation';
 
 export function buildChunkListFromOffset(

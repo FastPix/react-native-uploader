@@ -11,7 +11,7 @@
     "moduleResolution": "node",
     "declaration": true,
     "declarationDir": "./dist/types",
-    "rootDir": "src",
+    // "rootDir": "src",
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
     "noImplicitAny": true,
@@ -20,12 +20,8 @@
     "noUnusedParameters": true,
     "types": ["node","jest"]
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*","__tests__"],
   "exclude": [
-      "**/__tests__/*",
-      "**/*.test.ts",
-      "**/*.test.tsx",
-      "**/*.spec.ts",
       "node_modules",
       "example",
       "lib"

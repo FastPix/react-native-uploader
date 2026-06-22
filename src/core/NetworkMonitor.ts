@@ -1,6 +1,6 @@
 import NetInfo from '@react-native-community/netinfo';
 import type { NetInfoState, NetInfoSubscription } from '@react-native-community/netinfo';
-import { log, warn } from '../logger';
+import { log, warn } from '../utils/logger';
 
 export type NetworkStatus = 'online' | 'offline' | 'unknown';
 

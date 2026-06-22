@@ -1,20 +1,20 @@
 import {
-  buildChunkList,
+  buildChunkListFromOffset,
   chunkIndexForOffset,
   buildContentRangeHeader,
-} from '../core/ChunkEngine';
+} from '../src/core/ChunkEngine';
 
 describe('ChunkEngine', () => {
-  describe('buildChunkList', () => {
+  describe('buildChunkListFromOffset', () => {
     it('produces the correct number of chunks for an evenly divisible file', () => {
       // 10 MB file, 5 MB chunks → 2 chunks
-      const chunks = buildChunkList(10 * 1024 * 1024, 5 * 1024);
+      const chunks = buildChunkListFromOffset(10 * 1024 * 1024, 5 * 1024);
       expect(chunks).toHaveLength(2);
     });
 
     it('produces an extra smaller chunk when the file does not divide evenly', () => {
       // 12 MB file, 5 MB chunks → 3 chunks (5 MB, 5 MB, 2 MB)
-      const chunks = buildChunkList(12 * 1024 * 1024, 5 * 1024);
+      const chunks = buildChunkListFromOffset(12 * 1024 * 1024, 5 * 1024);
       expect(chunks).toHaveLength(3);
       // Last chunk is smaller
       const last = chunks[chunks.length - 1];
@@ -22,7 +22,7 @@ describe('ChunkEngine', () => {
     });
 
     it('assigns zero-based sequential indices', () => {
-      const chunks = buildChunkList(20 * 1024 * 1024, 5 * 1024);
+      const chunks = buildChunkListFromOffset(20 * 1024 * 1024, 5 * 1024);
       chunks.forEach((chunk, i) => {
         expect(chunk.index).toBe(i);
       });
@@ -30,7 +30,7 @@ describe('ChunkEngine', () => {
 
     it('covers the entire file without gaps or overlaps', () => {
       const fileSize = 17 * 1024 * 1024;
-      const chunks = buildChunkList(fileSize, 5 * 1024);
+      const chunks = buildChunkListFromOffset(fileSize, 5 * 1024);
 
       // First chunk starts at 0
       expect(chunks[0].start).toBe(0);
@@ -46,7 +46,7 @@ describe('ChunkEngine', () => {
 
     it('correctly sets totalSize on every chunk', () => {
       const fileSize = 8 * 1024 * 1024;
-      const chunks = buildChunkList(fileSize, 5 * 1024);
+      const chunks = buildChunkListFromOffset(fileSize, 5 * 1024);
       chunks.forEach((chunk) => {
         expect(chunk.totalSize).toBe(fileSize);
       });
@@ -55,14 +55,14 @@ describe('ChunkEngine', () => {
     it('handles a file smaller than one chunk', () => {
       // 2 MB file with 5 MB chunk size → 1 chunk
       const fileSize = 2 * 1024 * 1024;
-      const chunks = buildChunkList(fileSize, 5 * 1024);
+      const chunks = buildChunkListFromOffset(fileSize, 5 * 1024);
       expect(chunks).toHaveLength(1);
       expect(chunks[0].start).toBe(0);
       expect(chunks[0].end).toBe(fileSize);
     });
 
     it('throws for zero file size', () => {
-      expect(() => buildChunkList(0, 5 * 1024)).toThrow('[FastPix]');
+      expect(() => buildChunkListFromOffset(0, 5 * 1024)).toThrow('[FastPix]');
     });
   });
 

@@ -1,8 +1,8 @@
 
-// ── Primary class ─────────────────────────────────────────────────────────────
+// Primary class 
 export { FastPixUpload } from './core/FastPixUpload';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// Types 
 export type {
   FastPixUploadOptions,
   UploadState,

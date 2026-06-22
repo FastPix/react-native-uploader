@@ -1,24 +1,6 @@
-/**
- * FastPixUpload integration tests — Phase 5
- *
- * Tests the full public API: start / pause / resume / abort, the FSM
- * state machine, all lifecycle events, network resilience, and the Phase 4
- * resume offset sync. Every native dependency is mocked so the suite runs
- * in Node without a React Native environment.
- *
- * Mock boundary:
- *   react-native-blob-util  →  fake file stat (10 MB) + fake readStream
- *   axios                   →  controlled PUT responses
- *   @react-native-community/netinfo → controlled connectivity callbacks
- */
-
-// ─── Mocks ────────────────────────────────────────────────────────────────────
-
 const FILE_SIZE_10MB = 10 * 1024 * 1024;
 const CHUNK_SIZE_KB  = 5 * 1024; // 5 MB → 2 chunks for a 10 MB file
 
-// NetInfo: we keep a reference to the registered listener so tests can
-// simulate going offline/online.
 let _netInfoListener: ((state: object) => void) | null = null;
 
 jest.mock('@react-native-community/netinfo', () => ({
@@ -78,7 +60,7 @@ jest.mock('axios', () => {
 // ─── Imports ──────────────────────────────────────────────────────────────────
 
 import axios from 'axios';
-import { FastPixUpload } from '../core/FastPixUpload';
+import { FastPixUpload } from '../src/core/FastPixUpload';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -120,7 +102,6 @@ beforeEach(() => {
 });
 
 // ─── Test suites ──────────────────────────────────────────────────────────────
-
 describe('FastPixUpload — FSM & lifecycle events', () => {
 
   it('starts in IDLE state', () => {

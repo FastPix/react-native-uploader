@@ -1,4 +1,4 @@
-import { SDK_CONFIG } from './config';
+import { SDK_CONFIG } from '../utils/config';
 
 export const log = (message: string, ...args: any[]) => {
   if (SDK_CONFIG.enableLogs) {

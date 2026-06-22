@@ -1,0 +1,20 @@
+# React Native Sandbox Environment
+.env
+.env.local
+
+# Android Specifics
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+*.apk
+*.aar
+*.keystore
+!android/app/debug.keystore
+
+# iOS Specifics
+ios/build/
+ios/DerivedData/
+ios/Pods/
+ios/.xcode.env.local
+*.xcworkspace

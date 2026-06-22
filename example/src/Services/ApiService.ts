@@ -13,18 +13,15 @@ class ApiService {
   private static ACCESS_TOKEN_ID = Constants.Access_Token_Id
   private static SECRET_KEY = Constants.Secret_Key;
 
-  /**
-   * Generates the Basic Auth header string
-   */
+  // Generates the Basic Auth header string
   private static getAuthHeader(): string {
     const credentials = `${this.ACCESS_TOKEN_ID}:${this.SECRET_KEY}`;
     const basicAuthCredential = base64.encode(credentials);
     return `Basic ${basicAuthCredential}`;
   }
 
-  /**
-   * Creates a direct upload link with FastPix
-   */
+  
+  // Creates a direct upload link with FastPix
   public static async createDirectUpload(): Promise<UploadResponse | null> {
     const url = `${this.BASE_URL}/upload`;
 
@@ -75,8 +72,6 @@ class ApiService {
     }
   }
 
-  // You can easily add more shared API methods here over time:
-  // public static async getVideos() { ... }
 }
 
 export default ApiService;

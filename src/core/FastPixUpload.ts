@@ -11,8 +11,9 @@ import type {
   UploadEventCallback,
   UploadProgressSnapshot,
 } from '../types';
-import { info, log, warn } from '../logger';
-import { SDK_CONFIG } from '../config';
+
+import { SDK_CONFIG } from '../utils/config';
+import { info, log, warn } from '../utils/logger';
 
 const VALID_TRANSITIONS: Readonly<Record<UploadState, readonly UploadState[]>> = {
   IDLE:      ['STARTED'],
