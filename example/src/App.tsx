@@ -1,6 +1,4 @@
 import React, {useEffect, useRef, useState} from 'react';
-import RNFS from 'react-native-fs';
-import RNBlobUtil from 'react-native-blob-util';
 import {
   SafeAreaView,
   View,
@@ -9,7 +7,6 @@ import {
   StyleSheet,
   ScrollView,
   TextInput,
-  Platform,
 } from 'react-native';
 import {launchImageLibrary} from 'react-native-image-picker';
 import NetInfo from '@react-native-community/netinfo';
@@ -20,6 +17,7 @@ import ApiService from './Services/ApiService';
 type LogType = 'info' | 'success' | 'warning' | 'error';
 
 interface LogEntry {
+  id: string;
   time: string;
   message: string;
   type: LogType;
@@ -54,7 +52,15 @@ export default function App() {
 
   const addLog = (message: string, type: LogType = 'info') => {
     const time = new Date().toLocaleTimeString();
-    setLogs(prev => [{time, message, type}, ...prev]);
+
+    const log: LogEntry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      time,
+      message,
+      type,
+    };
+
+    setLogs(prev => [log, ...prev]);
     console.log(`[${time}] ${message}`);
   };
 
@@ -64,7 +70,7 @@ export default function App() {
     if (!bytes) return '0 B';
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return parseFloat((bytes / Math.pow(1024, i)).toFixed(2)) + ' ' + sizes[i];
+    return Number.parseFloat((bytes / Math.pow(1024, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
   const resetStats = () => {
@@ -318,9 +324,9 @@ export default function App() {
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Event Logs ({logs.length})</Text>
           <ScrollView nestedScrollEnabled style={styles.logs} ref={scrollRef}>
-            {logs.map((log, index) => (
+            {logs.map((log) => (
               <Text
-                key={index}
+                key={log.id}
                 style={{color: getLogColor(log.type), marginBottom: 6}}>
                 [{log.time}] {log.message}
               </Text>

@@ -9,9 +9,9 @@ interface UploadResponse {
 
 class ApiService {
  
-  private static BASE_URL = Constants.Base_Api_Url;
-  private static ACCESS_TOKEN_ID = Constants.Access_Token_Id
-  private static SECRET_KEY = Constants.Secret_Key;
+  private static readonly BASE_URL = Constants.Base_Api_Url;
+  private static readonly ACCESS_TOKEN_ID = Constants.Access_Token_Id
+  private static readonly SECRET_KEY = Constants.Secret_Key;
 
   // Generates the Basic Auth header string
   private static getAuthHeader(): string {
@@ -47,12 +47,12 @@ class ApiService {
       const dataDic = response.data?.data;
       console.log(`response : ${dataDic}`);
       
-      if (dataDic && dataDic.uploadId && dataDic.url) {
-          console.log(`got the upload details: ${dataDic.url} : ${dataDic.uploadId}`);
-        return {
-          url: dataDic.url,
-          uploadId: dataDic.uploadId,
-        };
+      const uploadId = dataDic?.uploadId;
+      const uploadUrl = dataDic?.url;
+
+      if (uploadId && uploadUrl) {
+        console.log(`got the upload details: ${uploadUrl} : ${uploadId}`);
+        return { url: uploadUrl, uploadId: uploadId };
       }
         console.log(`got nothing returning null : ${dataDic}`);
       return null;

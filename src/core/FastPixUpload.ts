@@ -154,17 +154,21 @@ export class FastPixUpload {
   get state(): UploadState { return this._state; }
 
   get progress(): UploadProgressSnapshot {
-    const bytesUploaded =
-      this._state === 'UPLOADING' || this._state === 'RESUMED'
-        ? this._liveBytesUploaded
-        : this._uploadedOffset;
+    const isLiveState =
+      this._state === 'UPLOADING' || this._state === 'RESUMED';
 
-    const percentage =
-      this._state === 'UPLOADING' || this._state === 'RESUMED'
-        ? this._livePercentage
-        : this._fileSizeBytes > 0
-          ? Math.floor((this._uploadedOffset / this._fileSizeBytes) * 100)
-          : 0;
+    const bytesUploaded = isLiveState
+      ? this._liveBytesUploaded
+      : this._uploadedOffset;
+
+    const uploadedPercentage =
+      this._fileSizeBytes > 0
+        ? Math.floor((this._uploadedOffset / this._fileSizeBytes) * 100)
+        : 0;
+
+    const percentage = isLiveState
+      ? this._livePercentage
+      : uploadedPercentage;
 
     return {
       state: this._state,
@@ -184,7 +188,7 @@ export class FastPixUpload {
     this._resolvedFileUri = decodeURIComponent(this._opts.fileUri.replace(/^file:\/\//, ''));
 
     const stat = await RNBlobUtil.fs.stat(this._resolvedFileUri);
-    this._fileSizeBytes = parseInt(String(stat.size), 10);
+    this._fileSizeBytes = Number.parseInt(String(stat.size), 10);
 
     if (!Number.isFinite(this._fileSizeBytes) || this._fileSizeBytes <= 0) {
       throw new Error(`[FastPix] File is empty or could not be read: ${this._opts.fileUri}`);
@@ -343,7 +347,7 @@ export class FastPixUpload {
         if (rangeHeader) {
           const match = /bytes=0-(\d+)/i.exec(rangeHeader);
           if (match?.[1]) {
-            const serverOffset = parseInt(match[1], 10) + 1;
+            const serverOffset = Number.parseInt(match[1], 10) + 1;
 
             if (Number.isFinite(serverOffset) && serverOffset >= 0) {
               if (serverOffset !== this._uploadedOffset) {
