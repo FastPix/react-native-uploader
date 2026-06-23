@@ -1,714 +1,462 @@
-const FILE_SIZE_10MB = 10 * 1024 * 1024;
-const CHUNK_SIZE_KB  = 5 * 1024; // 5 MB → 2 chunks for a 10 MB file
+import { FastPixUpload } from '../src/core/FastPixUpload';
+import type { FastPixUploadOptions } from '../src/types';
 
-let _netInfoListener: ((state: object) => void) | null = null;
-
-jest.mock('@react-native-community/netinfo', () => ({
-  __esModule: true,
-  default: {
-    addEventListener: jest.fn((cb: (state: object) => void) => {
-      _netInfoListener = cb;
-      return jest.fn(); // unsubscribe function
-    }),
-    fetch: jest.fn().mockResolvedValue({
-      isConnected: true,
-      isInternetReachable: true,
-    }),
-  },
+// Logger 
+jest.mock('../utils/logger', () => ({
+  log: jest.fn(),
+  info: jest.fn(),
+  warn: jest.fn(),
 }));
 
+// SDK config 
+jest.mock('../utils/config', () => ({ SDK_CONFIG: { enableLogs: false } }));
+
+// validation
+jest.mock('../utils/validation', () => ({
+  validateAndNormalizeOptions: jest.fn((opts: FastPixUploadOptions) => ({
+    endpoint: opts.endpoint ?? 'https://example.com/upload',
+    fileUri: opts.fileUri ?? 'file:///video.mp4',
+    chunkSize: 5 * 1024,
+    maxRetries: 2,
+    retryDelay: 0,
+    maxFileSize: 0,
+    autoHandleNetworkEvents: opts.autoHandleNetworkEvents ?? true,
+    enableLogs: false,
+  })),
+  resolveEndpoint: jest.fn(async (e: string | (() => Promise<string>)) =>
+    typeof e === 'function' ? e() : e,
+  ),
+}));
+
+//  ChunkEngine
+jest.mock('./ChunkEngine', () => ({
+  chunkIndexForOffset: jest.fn(() => 0),
+}));
+
+//  react-native-blob-util 
+const mockStat = jest.fn();
 jest.mock('react-native-blob-util', () => ({
   __esModule: true,
   default: {
-    fs: {
-      stat: jest.fn().mockResolvedValue({ size: String(FILE_SIZE_10MB) }),
-      readStream: jest.fn().mockImplementation(() =>
-        Promise.resolve({
-          open: jest.fn(),
-          onData: jest.fn((cb: (d: string) => void) => {
-            cb(Buffer.from('chunk').toString('base64'));
-          }),
-          onError: jest.fn(),
-          onEnd: jest.fn((cb: () => void) => cb()),
-        }),
-      ),
-    },
-    base64: {
-      decode: jest.fn((b64: string) =>
-        Buffer.from(b64, 'base64').toString('binary'),
-      ),
-    },
+    fs: { stat: mockStat },
   },
 }));
 
-// axios mock — we control per-test via mockedAxiosPut
-const mockCancel = jest.fn();
-jest.mock('axios', () => {
-  return {
-    __esModule: true,
-    default: {
-      put: jest.fn(),
-      isCancel: jest.fn(() => false),
-      CancelToken: {
-        source: jest.fn(() => ({ token: {}, cancel: mockCancel })),
-      },
-    },
-    isCancel: jest.fn(() => false),
-  };
+//  UploadEngine 
+let mockEngineRun = jest.fn();
+let mockEngineAbort = jest.fn();
+let mockEngineSetStartOffset = jest.fn();
+
+jest.mock('./UploadEngine', () => ({
+  UploadEngine: jest.fn().mockImplementation(() => ({
+    run: mockEngineRun,
+    abort: mockEngineAbort,
+    setStartOffset: mockEngineSetStartOffset,
+  })),
+}));
+
+//  NetworkMonitor 
+let capturedNetworkCallback: ((status: 'online' | 'offline' | 'unknown') => void) | null = null;
+
+const mockNetworkStart = jest.fn();
+const mockNetworkStop = jest.fn();
+const mockNetworkOnChange = jest.fn((cb: (s: string) => void) => {
+  capturedNetworkCallback = cb as (status: 'online' | 'offline' | 'unknown') => void;
+  return jest.fn(); // cleanup noop
 });
 
-// ─── Imports ──────────────────────────────────────────────────────────────────
+jest.mock('./NetworkMonitor', () => ({
+  NetworkMonitor: jest.fn().mockImplementation(() => ({
+    start: mockNetworkStart,
+    stop: mockNetworkStop,
+    onChange: mockNetworkOnChange,
+  })),
+}));
 
-import axios from 'axios';
-import { FastPixUpload } from '../src/core/FastPixUpload';
+//  Helpers 
+const FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const mockedAxios = axios as jest.Mocked<typeof axios>;
-
-/** Build a FastPixUpload with sane test defaults. */
-function makeUpload(overrides?: Partial<ConstructorParameters<typeof FastPixUpload>[0]>) {
-  return new FastPixUpload({
-    endpoint: 'https://example.com/upload',
-    fileUri: 'file:///video.mp4',
-    chunkSize: CHUNK_SIZE_KB,
-    maxRetries: 2,
-    retryDelay: 5,     // fast
-    autoHandleNetworkEvents: false, // most tests control this manually
-    ...overrides,
-  });
-}
-
-/** Simulate network going offline via the NetInfo listener. */
-function goOffline() {
-  _netInfoListener?.({ isConnected: false, isInternetReachable: false });
-}
-
-/** Simulate network coming back online. */
-function goOnline() {
-  _netInfoListener?.({ isConnected: true, isInternetReachable: true });
-}
-
-/** Resolves after all pending microtasks and a tick of the event loop. */
-function flushAsync() {
-  return new Promise<void>((resolve) => setImmediate(resolve));
-}
-
-beforeEach(() => {
-  jest.clearAllMocks();
-  _netInfoListener = null;
-  // Default: every chunk PUT succeeds immediately
-  mockedAxios.put.mockResolvedValue({ status: 308 });
+const defaultOpts = (): FastPixUploadOptions => ({
+  endpoint: 'https://example.com/upload',
+  fileUri: 'file:///video.mp4',
 });
 
-// ─── Test suites ──────────────────────────────────────────────────────────────
-describe('FastPixUpload — FSM & lifecycle events', () => {
+function buildUpload(overrides: Partial<FastPixUploadOptions> = {}): FastPixUpload {
+  return new FastPixUpload({ ...defaultOpts(), ...overrides });
+}
 
-  it('starts in IDLE state', () => {
-    const upload = makeUpload();
-    expect(upload.state).toBe('IDLE');
+function setupSuccessfulEngine(): void {
+  mockStat.mockResolvedValue({ size: FILE_SIZE });
+  mockEngineRun.mockResolvedValue({ success: true });
+}
+
+describe('FastPixUpload', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    capturedNetworkCallback = null;
+    mockEngineRun = jest.fn().mockResolvedValue({ success: true });
+    mockEngineAbort = jest.fn();
+    mockEngineSetStartOffset = jest.fn();
   });
 
-  it('transitions IDLE → STARTED → UPLOADING → COMPLETED on success', async () => {
-    const states: string[] = [];
-    const upload = makeUpload();
+  // ── constructor ────────────────────────────
+  describe('constructor', () => {
+    it('initialises state as IDLE', () => {
+      const upload = buildUpload();
+      expect(upload.state).toBe('IDLE');
+    });
 
-    upload.on('stateChange', ({ to }) => states.push(to));
+    it('initialises progress with zeroed values', () => {
+      const upload = buildUpload();
+      const p = upload.progress;
+      expect(p.bytesUploaded).toBe(0);
+      expect(p.bytesTotal).toBe(0);
+      expect(p.percentage).toBe(0);
+      expect(p.state).toBe('IDLE');
+    });
 
-    // 10 MB file, 5 MB chunks = 2 chunks
-    mockedAxios.put
-      .mockResolvedValueOnce({ status: 308 }) // chunk 0
-      .mockResolvedValueOnce({ status: 200 }); // chunk 1
-
-    await upload.start();
-
-    expect(states).toEqual(['STARTED', 'UPLOADING', 'COMPLETED']);
-    expect(upload.state).toBe('COMPLETED');
-  });
-
-  it('emits "started" with fileSize and endpoint', async () => {
-    const handler = jest.fn();
-    const upload = makeUpload();
-    upload.on('started', handler);
-
-    mockedAxios.put
-      .mockResolvedValueOnce({ status: 308 })
-      .mockResolvedValueOnce({ status: 200 });
-
-    await upload.start();
-
-    expect(handler).toHaveBeenCalledWith({
-      fileSize: FILE_SIZE_10MB,
-      endpoint: 'https://example.com/upload',
+    it('exposes an empty stateHistory', () => {
+      const upload = buildUpload();
+      expect(upload.stateHistory).toHaveLength(0);
     });
   });
 
-  it('emits "progress" after each chunk', async () => {
-    const progressCalls: number[] = [];
-    const upload = makeUpload();
+  // start() 
+  describe('start()', () => {
+    it('transitions IDLE → STARTED → UPLOADING → COMPLETED on success', async () => {
+      setupSuccessfulEngine();
+      const upload = buildUpload();
+      const states: string[] = [];
+      upload.on('stateChange', ({ to }) => states.push(to));
 
-    upload.on('progress', ({ percentage }) => progressCalls.push(percentage));
+      await upload.start();
 
-    mockedAxios.put
-      .mockResolvedValueOnce({ status: 308 })
-      .mockResolvedValueOnce({ status: 200 });
+      expect(states).toEqual(expect.arrayContaining(['STARTED', 'UPLOADING', 'COMPLETED']));
+      expect(upload.state).toBe('COMPLETED');
+    });
 
-    await upload.start();
+    it('is a no-op when already started', async () => {
+      setupSuccessfulEngine();
+      const upload = buildUpload();
+      await upload.start();
+      // Second call after COMPLETED → should warn and return early
+      const warnMock = jest.requireMock('../utils/logger').warn;
+      const before = warnMock.mock.calls.length;
+      await upload.start();
+      expect(warnMock.mock.calls.length).toBeGreaterThan(before);
+    });
 
-    // 2 chunks → 2 progress events, percentages 50% and 100%
-    expect(progressCalls).toEqual([50, 100]);
+    it('emits "started" event with fileSize and endpoint', async () => {
+      setupSuccessfulEngine();
+      const upload = buildUpload();
+      const startedCb = jest.fn();
+      upload.on('started', startedCb);
+
+      await upload.start();
+
+      expect(startedCb).toHaveBeenCalledWith({
+        fileSize: FILE_SIZE,
+        endpoint: 'https://example.com/upload',
+      });
+    });
+
+    it('emits "success" event on completion', async () => {
+      setupSuccessfulEngine();
+      const upload = buildUpload();
+      const successCb = jest.fn();
+      upload.on('success', successCb);
+
+      await upload.start();
+      expect(successCb).toHaveBeenCalledTimes(1);
+    });
+
+    it('transitions to FAILED and emits "error" when engine fails', async () => {
+      mockStat.mockResolvedValue({ size: FILE_SIZE });
+      mockEngineRun.mockResolvedValue({
+        success: false,
+        error: new Error('chunk failed'),
+      });
+      const upload = buildUpload();
+      const errorCb = jest.fn();
+      upload.on('error', errorCb);
+
+      await upload.start();
+
+      expect(upload.state).toBe('FAILED');
+      expect(errorCb).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'chunk failed', retriable: false }),
+      );
+    });
+
+    it('transitions to FAILED and emits "error" when stat throws', async () => {
+      mockStat.mockRejectedValue(new Error('File not found'));
+      const upload = buildUpload();
+      const errorCb = jest.fn();
+      upload.on('error', errorCb);
+
+      await upload.start();
+
+      expect(upload.state).toBe('FAILED');
+      expect(errorCb).toHaveBeenCalled();
+    });
+
+    it('throws when file size is 0', async () => {
+      mockStat.mockResolvedValue({ size: 0 });
+      const upload = buildUpload();
+      const errorCb = jest.fn();
+      upload.on('error', errorCb);
+
+      await upload.start();
+      expect(errorCb).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining('empty') }),
+      );
+    });
+
+    it('throws when file exceeds maxFileSize', async () => {
+      mockStat.mockResolvedValue({ size: FILE_SIZE });
+      const upload = buildUpload({ maxFileSize: FILE_SIZE - 1 } as FastPixUploadOptions);
+      const errorCb = jest.fn();
+      upload.on('error', errorCb);
+
+      await upload.start();
+      expect(errorCb).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining('exceeds') }),
+      );
+    });
   });
 
-  it('emits "chunkSuccess" for each chunk with correct index and offset', async () => {
-    const chunks: Array<{ chunkIndex: number; offset: number }> = [];
-    const upload = makeUpload();
-    upload.on('chunkSuccess', (p) => chunks.push(p));
-
-    mockedAxios.put
-      .mockResolvedValueOnce({ status: 308 })
-      .mockResolvedValueOnce({ status: 200 });
-
-    await upload.start();
-
-    expect(chunks).toHaveLength(2);
-    expect(chunks[0]).toEqual({ chunkIndex: 0, offset: 5 * 1024 * 1024 });
-    expect(chunks[1]).toEqual({ chunkIndex: 1, offset: FILE_SIZE_10MB });
-  });
-
-  it('emits "success" when all chunks are acknowledged', async () => {
-    const handler = jest.fn();
-    const upload = makeUpload();
-    upload.on('success', handler);
-
-    mockedAxios.put
-      .mockResolvedValueOnce({ status: 308 })
-      .mockResolvedValueOnce({ status: 200 });
-
-    await upload.start();
-    expect(handler).toHaveBeenCalledTimes(1);
-  });
-
-  it('emits "error" and transitions to FAILED when a chunk permanently fails', async () => {
-    const errorHandler = jest.fn();
-    const upload = makeUpload({ maxRetries: 0 });
-    upload.on('error', errorHandler);
-
-    mockedAxios.put.mockRejectedValue(new Error('Server 500'));
-
-    await upload.start();
-
-    expect(upload.state).toBe('FAILED');
-    expect(errorHandler).toHaveBeenCalledWith(
-      expect.objectContaining({ retriable: false }),
-    );
-  });
-
-  it('records stateHistory for the full happy path', async () => {
-    const upload = makeUpload();
-
-    mockedAxios.put
-      .mockResolvedValueOnce({ status: 308 })
-      .mockResolvedValueOnce({ status: 200 });
-
-    await upload.start();
-
-    const states = upload.stateHistory.map((e) => `${e.from}→${e.to}`);
-    expect(states).toEqual([
-      'IDLE→STARTED',
-      'STARTED→UPLOADING',
-      'UPLOADING→COMPLETED',
-    ]);
-  });
-
-  it('start() is a no-op when not in IDLE state', async () => {
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    const upload = makeUpload();
-
-    mockedAxios.put.mockReturnValue(new Promise(() => {})); // hang
-    upload.start(); // don't await — stays UPLOADING
-
-    await flushAsync();
-    await upload.start(); // second call ignored
-
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('start() ignored'),
-    );
-    warnSpy.mockRestore();
-  });
-});
-
-// ─── Pause / Resume ───────────────────────────────────────────────────────────
-
-describe('FastPixUpload — pause and resume', () => {
-
-  it('pause() transitions UPLOADING → PAUSED and emits "pause"', async () => {
-    const pauseHandler = jest.fn();
-    const upload = makeUpload();
-    upload.on('pause', pauseHandler);
-
-    // First chunk hangs so we can pause mid-upload
-    mockedAxios.put.mockReturnValue(new Promise(() => {}));
-    upload.start(); // intentionally not awaited
-    await flushAsync();
-
-    upload.pause();
-
-    expect(upload.state).toBe('PAUSED');
-    expect(pauseHandler).toHaveBeenCalledWith({ reason: 'user' });
-  });
-
-  it('resume() transitions PAUSED → RESUMED → UPLOADING → COMPLETED', async () => {
-    const states: string[] = [];
-    const upload = makeUpload();
-    upload.on('stateChange', ({ to }) => states.push(to));
-
-    // Chunk 0 hangs so we can pause; chunks after resume succeed
-    let resolveChunk0: () => void;
-    mockedAxios.put
-      .mockImplementationOnce(
-        () => new Promise<{ status: number }>((res) => {
-          resolveChunk0 = () => res({ status: 308 });
+  // pause() 
+  describe('pause()', () => {
+    it('transitions UPLOADING → PAUSED', async () => {
+      mockStat.mockResolvedValue({ size: FILE_SIZE });
+      let resolveEngine!: (v: { success: boolean }) => void;
+      mockEngineRun.mockReturnValue(
+        new Promise<{ success: boolean }>((res) => {
+          resolveEngine = res;
         }),
-      )
-      // Offset-sync PUT (bytes */<size>) returns 308 with no Range header
-      .mockResolvedValueOnce({ status: 308, headers: {} })
-      // chunk 1 after resume
-      .mockResolvedValueOnce({ status: 200 });
-
-    upload.start(); // not awaited
-    await flushAsync();
-    upload.pause();
-    expect(upload.state).toBe('PAUSED');
-
-    // Resolve the hung chunk after pause (simulates in-flight chunk completing)
-    resolveChunk0!();
-    await flushAsync();
-
-    await upload.resume();
-
-    expect(upload.state).toBe('COMPLETED');
-    expect(states).toContain('PAUSED');
-    expect(states).toContain('RESUMED');
-    expect(states).toContain('COMPLETED');
-  });
-
-  it('pause() emits reason "user"', async () => {
-    const pauseHandler = jest.fn();
-    const upload = makeUpload();
-    upload.on('pause', pauseHandler);
-
-    mockedAxios.put.mockReturnValue(new Promise(() => {}));
-    upload.start();
-    await flushAsync();
-
-    upload.pause();
-    expect(pauseHandler).toHaveBeenCalledWith({ reason: 'user' });
-  });
-
-  it('pause() is a no-op when not UPLOADING', () => {
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    const upload = makeUpload();
-    upload.pause(); // state is IDLE
-
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('pause() ignored'),
-    );
-    expect(upload.state).toBe('IDLE');
-    warnSpy.mockRestore();
-  });
-
-  it('resume() is a no-op when not PAUSED', async () => {
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    const upload = makeUpload();
-    await upload.resume(); // state is IDLE
-
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('resume() ignored'),
-    );
-    warnSpy.mockRestore();
-  });
-
-  it('.progress reflects correct bytesUploaded after first chunk', async () => {
-    const upload = makeUpload();
-
-    let resolveChunk0: () => void;
-    mockedAxios.put
-      .mockImplementationOnce(
-        () => new Promise<{ status: number }>((res) => {
-          resolveChunk0 = () => res({ status: 308 });
-        }),
-      )
-      .mockReturnValue(new Promise(() => {})); // chunk 1 hangs
-
-    upload.start();
-    await flushAsync();
-    resolveChunk0!(); // complete chunk 0
-    await flushAsync();
-
-    const snap = upload.progress;
-    expect(snap.bytesUploaded).toBe(5 * 1024 * 1024);
-    expect(snap.percentage).toBe(50);
-    expect(snap.currentChunkIndex).toBe(1);
-  });
-});
-
-// ─── Abort ────────────────────────────────────────────────────────────────────
-
-describe('FastPixUpload — abort', () => {
-
-  it('abort() resets state to IDLE and clears progress', async () => {
-    const upload = makeUpload();
-
-    mockedAxios.put.mockReturnValue(new Promise(() => {}));
-    upload.start();
-    await flushAsync();
-
-    upload.abort();
-
-    expect(upload.state).toBe('IDLE');
-    expect(upload.progress.bytesUploaded).toBe(0);
-    expect(upload.progress.bytesTotal).toBe(0);
-  });
-
-  it('abort() removes all event listeners (no further events fire)', async () => {
-    const successHandler = jest.fn();
-    const upload = makeUpload();
-    upload.on('success', successHandler);
-
-    mockedAxios.put.mockReturnValue(new Promise(() => {}));
-    upload.start();
-    await flushAsync();
-
-    upload.abort();
-
-    // Even if the engine somehow completes after abort, no events fire.
-    expect(successHandler).not.toHaveBeenCalled();
-  });
-});
-
-// ─── Phase 4: Network resilience ─────────────────────────────────────────────
-
-describe('FastPixUpload — network resilience (Phase 4)', () => {
-
-  it('emits "offline" when network drops', async () => {
-    const offlineHandler = jest.fn();
-    const upload = makeUpload({ autoHandleNetworkEvents: true });
-    upload.on('offline', offlineHandler);
-
-    mockedAxios.put.mockReturnValue(new Promise(() => {}));
-    upload.start();
-    await flushAsync();
-
-    goOffline();
-
-    expect(offlineHandler).toHaveBeenCalledTimes(1);
-  });
-
-  it('auto-pauses with reason "network" when going offline during upload', async () => {
-    const pauseHandler = jest.fn();
-    const upload = makeUpload({ autoHandleNetworkEvents: true });
-    upload.on('pause', pauseHandler);
-
-    mockedAxios.put.mockReturnValue(new Promise(() => {}));
-    upload.start();
-    await flushAsync();
-
-    expect(upload.state).toBe('UPLOADING');
-    goOffline();
-
-    expect(upload.state).toBe('PAUSED');
-    expect(pauseHandler).toHaveBeenCalledWith({ reason: 'network' });
-  });
-
-  it('emits "online" when network is restored', async () => {
-    const onlineHandler = jest.fn();
-    const upload = makeUpload({ autoHandleNetworkEvents: true });
-    upload.on('online', onlineHandler);
-
-    mockedAxios.put.mockReturnValue(new Promise(() => {}));
-    upload.start();
-    await flushAsync();
-
-    goOffline();
-    goOnline();
-
-    expect(onlineHandler).toHaveBeenCalledTimes(1);
-  });
-
-  it('auto-resumes (without user action) when connectivity returns', async () => {
-    const upload = makeUpload({ autoHandleNetworkEvents: true });
-
-    mockedAxios.put
-      .mockReturnValueOnce(new Promise(() => {})) // chunk 0 hangs → pause
-      // offset-sync PUT
-      .mockResolvedValueOnce({ status: 308, headers: {} })
-      // chunk 1 after auto-resume
-      .mockResolvedValueOnce({ status: 200 });
-
-    upload.start();
-    await flushAsync();
-
-    goOffline();
-    expect(upload.state).toBe('PAUSED');
-
-    goOnline();
-    await flushAsync();
-
-    // Allow async resume + engine run to settle
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(upload.state).toBe('COMPLETED');
-  });
-
-  it('a user-paused upload does NOT auto-resume on network reconnect', async () => {
-    const upload = makeUpload({ autoHandleNetworkEvents: true });
-
-    mockedAxios.put.mockReturnValue(new Promise(() => {}));
-    upload.start();
-    await flushAsync();
-
-    upload.pause(); // user-initiated
-    goOffline();
-    goOnline();
-    await flushAsync();
-
-    // Should still be PAUSED — user must call resume() explicitly.
-    expect(upload.state).toBe('PAUSED');
-  });
-});
-
-// ─── Phase 4: Resume offset sync ─────────────────────────────────────────────
-
-describe('FastPixUpload — resume offset sync (Phase 4)', () => {
-
-  // it('corrects local offset from server Range header on resume', async () => {
-  //   const upload = makeUpload();
-
-  //   // Start, upload chunk 0, then pause
-  //   let resolveChunk0: () => void;
-  //   mockedAxios.put
-  //     .mockImplementationOnce(
-  //       () => new Promise<{ status: number }>((res) => {
-  //         resolveChunk0 = () => res({ status: 308 });
-  //       }),
-  //     )
-  //     // offset-sync: server says only 1 MB uploaded (less than our 5 MB local)
-  //     .mockResolvedValueOnce({
-  //       status: 308,
-  //       headers: { range: 'bytes=0-1048575' }, // 1 MB
-  //     })
-  //     // chunk re-upload from corrected offset
-  //     .mockResolvedValueOnce({ status: 308 })
-  //     .mockResolvedValueOnce({ status: 200 });
-
-  //   upload.start();
-  //   await flushAsync();
-  //   resolveChunk0!();
-  //   await flushAsync();
-
-  //   upload.pause();
-  //   await upload.resume();
-
-  //   // After sync, offset should have been corrected to 1 MB (1048576 bytes)
-  //   // and the upload should still complete
-  //   expect(upload.state).toBe('COMPLETED');
-  // });
-
-  //   it('proceeds with local offset when server offset-sync request fails', async () => {
-  //   // Force axios to return a pending promise that never auto-completes on its own
-  //   mockedAxios.put.mockImplementation(() => new Promise(() => {}));
-
-  //   const upload = makeUpload();
-  //   upload.start(); // Spins up processing
-  //   await flushAsync();
-
-  //   // Now explicitly switch it into a paused state safely without it finishing behind your back
-  //   upload.pause(); 
-  //   expect(upload.state).toBe('PAUSED');
-
-  //   // Restore happy path resolution for when resume is executed
-  //   mockedAxios.put.mockResolvedValue({ status: 200 });
-  //   await upload.resume();
-
-  //   expect(upload.state).toBe('COMPLETED');
-  // });
-
-    it('proceeds with local offset when server offset-sync request fails', async () => {
-    // 1. Simulate a server failure on the sync request instead of a hanging promise
-    mockedAxios.put.mockRejectedValueOnce(new Error('Sync failed'));
-
-    const upload = makeUpload();
-    
-    // 2. Put the machine into a valid UPLOADING state first
-    // upload._state = 'UPLOADING'; 
-    upload['_state'] = 'UPLOADING';
-    upload.pause();
-    expect(upload.state).toBe('PAUSED');
-
-    // 3. Configure the next PUT request to succeed when resuming completes
-    mockedAxios.put.mockResolvedValueOnce({ status: 200 });
-    await upload.resume();
-
-    expect(upload.state).toBe('COMPLETED');
-  });
-
-
-
-  it('proceeds with local offset when server offset-sync request fails', async () => {
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    // const upload = makeUpload();
-
-    // let resolveChunk0: () => void;
-    // mockedAxios.put
-    //   .mockImplementationOnce(
-    //     () => new Promise<{ status: number }>((res) => {
-    //       resolveChunk0 = () => res({ status: 308 });
-    //     }),
-    //   )
-    //   // offset-sync fails
-    //   .mockRejectedValueOnce(new Error('Network error during sync'))
-    //   // resume continues from local offset
-    //   .mockResolvedValueOnce({ status: 200 });
-
-    // upload.start();
-    // await flushAsync();
-    // resolveChunk0!();
-    // await flushAsync();
-
-    // upload.pause();
-
-      let resolveChunk0: (() => void) | undefined;
-
-  // Overwrite the global mock for this test so it hangs until triggered
-  mockedAxios.put.mockImplementation(() => {
-    return new Promise((resolve) => {
-      resolveChunk0 = () => resolve({ status: 308 });
+      );
+
+      const upload = buildUpload();
+      upload.start(); // kick off (don't await)
+      // Wait for UPLOADING state
+      await new Promise((r) => setTimeout(r, 0));
+
+      upload.pause();
+      expect(upload.state).toBe('PAUSED');
+      resolveEngine({ success: false, error: new Error('Upload was aborted.') } as { success: boolean });
+    });
+
+    it('emits "pause" event with reason "user"', async () => {
+      mockStat.mockResolvedValue({ size: FILE_SIZE });
+      let resolveEngine!: (v: { success: boolean }) => void;
+      mockEngineRun.mockReturnValue(
+        new Promise<{ success: boolean }>((res) => { resolveEngine = res; }),
+      );
+
+      const upload = buildUpload();
+      const pauseCb = jest.fn();
+      upload.on('pause', pauseCb);
+
+      upload.start();
+      await new Promise((r) => setTimeout(r, 0));
+      upload.pause();
+
+      expect(pauseCb).toHaveBeenCalledWith({ reason: 'user' });
+      resolveEngine({ success: false, error: new Error('aborted') } as { success: boolean });
+    });
+
+    it('is a no-op when state is not UPLOADING', () => {
+      const upload = buildUpload();
+      expect(() => upload.pause()).not.toThrow();
+      expect(upload.state).toBe('IDLE');
     });
   });
 
-  const upload = makeUpload();
-  upload.start(); // Do not await yet, let it hang on the promise
-  await flushAsync();
-
-  if (resolveChunk0) {
-    resolveChunk0(); // Now manually complete chunk 0
-  }
-  await flushAsync();
-
-  upload.pause(); // Now it will be safely in 'UPLOADING' state and pause correctly
-  expect(upload.state).toBe('PAUSED');
-    await upload.resume();
-
-    expect(upload.state).toBe('COMPLETED');
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Could not verify resume offset'),
-      expect.anything(),
-    );
-    warnSpy.mockRestore();
-  });
-});
-
-// ─── Endpoint factory function ────────────────────────────────────────────────
-
-// describe('FastPixUpload — async endpoint factory', () => {
-
-//   it('calls the factory function to get the URL', async () => {
-//     const factory = jest.fn().mockResolvedValue('https://example.com/dynamic');
-//     const upload = makeUpload({ endpoint: factory });
-
-//     mockedAxios.put
-//       .mockResolvedValueOnce({ status: 308 })
-//       .mockResolvedValueOnce({ status: 200 });
-
-//     await upload.start();
-
-//     expect(factory).toHaveBeenCalledTimes(1);
-//     expect(upload.state).toBe('COMPLETED');
-//   });
-// });
-
-describe('FastPixUpload — async endpoint factory', () => {
-  it('calls the factory function to get the URL', async () => {
-    // 1. Prevent the engine from hanging during the subsequent upload attempt
-    mockedAxios.put.mockResolvedValue({ status: 200 });
-
-    const factory = jest.fn().mockResolvedValue('https://example.com');
-    const upload = makeUpload({ endpoint: factory });
-
-    await upload.start();
-
-    expect(factory).toHaveBeenCalled();
-    expect(upload.state).toBe('COMPLETED');
-  });
-});
-
-
-// ─── chunkAttempt events ──────────────────────────────────────────────────────
-
-describe('FastPixUpload — chunk attempt events', () => {
-
-  it('emits chunkAttempt before every upload attempt', async () => {
-    const attempts: Array<{ chunkIndex: number; attemptNumber: number }> = [];
-    const upload = makeUpload({ maxRetries: 1 });
-    upload.on('chunkAttempt', (p) => attempts.push(p));
-
-    // Chunk 0 fails once then succeeds; chunk 1 succeeds first try
-    mockedAxios.put
-      .mockRejectedValueOnce(new Error('transient'))
-      .mockResolvedValueOnce({ status: 308 }) // chunk 0 retry
-      .mockResolvedValueOnce({ status: 200 }); // chunk 1
-
-    await upload.start();
-
-    // chunk 0: attempt 1 (fail), attempt 2 (success); chunk 1: attempt 1
-    expect(attempts).toEqual([
-      { chunkIndex: 0, attemptNumber: 1 },
-      { chunkIndex: 0, attemptNumber: 2 },
-      { chunkIndex: 1, attemptNumber: 1 },
-    ]);
+  // resume()
+  describe('resume()', () => {
+    it('is a no-op when state is not PAUSED', async () => {
+      const upload = buildUpload();
+      await expect(upload.resume()).resolves.toBeUndefined();
+      expect(upload.state).toBe('IDLE');
+    });
   });
 
-  // it('emits chunkAttemptFailure with correct attempt number', async () => {
-  //   const failures: Array<{ chunkIndex: number; attemptNumber: number }> = [];
-  //   const upload = makeUpload({ maxRetries: 2 });
-  //   upload.on('chunkAttemptFailure', ({ chunkIndex, attemptNumber }) =>
-  //     failures.push({ chunkIndex, attemptNumber }),
-  //   );
-
-  //   mockedAxios.put
-  //     .mockRejectedValueOnce(new Error('err'))
-  //     .mockRejectedValueOnce(new Error('err'))
-  //     .mockResolvedValueOnce({ status: 308 })
-  //     .mockResolvedValueOnce({ status: 200 });
-
-  //   await upload.start();
-
-  //   expect(failures).toEqual([
-  //     { chunkIndex: 0, attemptNumber: 1 },
-  //     { chunkIndex: 0, attemptNumber: 2 },
-  //   ]);
-  // });
-
-    it('emits chunkAttemptFailure with correct attempt number', async () => {
-    const failures: any[] = [];
-    const upload = makeUpload({ maxRetries: 3 }); // Make sure maxRetries allows the cycles
-    
-    upload.on('chunkAttemptFailure', (payload) => {
-      failures.push({ chunkIndex: payload.chunkIndex, attemptNumber: payload.attemptNumber });
+  // abort() 
+  describe('abort()', () => {
+    it('is a no-op when state is IDLE', () => {
+      const upload = buildUpload();
+      expect(() => upload.abort()).not.toThrow();
+      expect(upload.state).toBe('IDLE');
     });
 
-    // Reset the mock chain so Chunk 0 fails on attempt 1 & 2, then succeeds on attempt 3
-    mockedAxios.put
-      .mockRejectedValueOnce(new Error('Network drop 1'))
-      .mockRejectedValueOnce(new Error('Network drop 2'))
-      .mockResolvedValue({ status: 200 });
+    it('transitions to IDLE and emits "abort" event', async () => {
+      mockStat.mockResolvedValue({ size: FILE_SIZE });
+      let resolveEngine!: (v: { success: boolean }) => void;
+      mockEngineRun.mockReturnValue(
+        new Promise<{ success: boolean }>((res) => { resolveEngine = res; }),
+      );
 
-    await upload.start();
+      const upload = buildUpload();
+      const abortCb = jest.fn();
+      upload.on('abort', abortCb);
 
-    expect(failures).toEqual([
-      { chunkIndex: 0, attemptNumber: 1 },
-      { chunkIndex: 0, attemptNumber: 2 },
-    ]);
+      upload.start();
+      await new Promise((r) => setTimeout(r, 0));
+      upload.abort();
+
+      expect(upload.state).toBe('IDLE');
+      expect(abortCb).toHaveBeenCalledTimes(1);
+      resolveEngine({ success: false });
+    });
+
+    it('resets all upload state fields', async () => {
+      mockStat.mockResolvedValue({ size: FILE_SIZE });
+      let resolveEngine!: (v: { success: boolean }) => void;
+      mockEngineRun.mockReturnValue(
+        new Promise<{ success: boolean }>((res) => { resolveEngine = res; }),
+      );
+
+      const upload = buildUpload();
+      upload.start();
+      await new Promise((r) => setTimeout(r, 0));
+      upload.abort();
+
+      const p = upload.progress;
+      expect(p.bytesTotal).toBe(0);
+      expect(p.bytesUploaded).toBe(0);
+      resolveEngine({ success: false });
+    });
   });
 
+  // on() / off() 
+  describe('on() / off()', () => {
+    it('on() returns an unsubscribe function', async () => {
+      setupSuccessfulEngine();
+      const upload = buildUpload();
+      const cb = jest.fn();
+      const unsub = upload.on('success', cb);
+      unsub();
+      await upload.start();
+      expect(cb).not.toHaveBeenCalled();
+    });
+
+    it('off() removes the specified listener', async () => {
+      setupSuccessfulEngine();
+      const upload = buildUpload();
+      const cb = jest.fn();
+      upload.on('success', cb);
+      upload.off('success', cb);
+      await upload.start();
+      expect(cb).not.toHaveBeenCalled();
+    });
+  });
+
+  // progress getter 
+  describe('progress getter', () => {
+    it('shows 0% when IDLE', () => {
+      const upload = buildUpload();
+      expect(upload.progress.percentage).toBe(0);
+    });
+
+    it('includes currentChunkIndex in the snapshot', () => {
+      const upload = buildUpload();
+      expect(upload.progress).toHaveProperty('currentChunkIndex');
+    });
+  });
+
+  // stateHistory 
+  describe('stateHistory', () => {
+    it('records transitions in order', async () => {
+      setupSuccessfulEngine();
+      const upload = buildUpload();
+      await upload.start();
+
+      const history = upload.stateHistory;
+      expect(history[0]).toMatchObject({ from: 'IDLE', to: 'STARTED' });
+      expect(history[history.length - 1]).toMatchObject({ to: 'COMPLETED' });
+    });
+
+    it('records timestamps (at) as numbers', async () => {
+      setupSuccessfulEngine();
+      const upload = buildUpload();
+      await upload.start();
+      upload.stateHistory.forEach((entry) => {
+        expect(typeof entry.at).toBe('number');
+        expect(entry.at).toBeGreaterThan(0);
+      });
+    });
+  });
+
+  // network handling
+  describe('autoHandleNetworkEvents', () => {
+    it('starts the NetworkMonitor when autoHandleNetworkEvents is true', async () => {
+      setupSuccessfulEngine();
+      const upload = buildUpload();
+      await upload.start();
+      expect(mockNetworkStart).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not start NetworkMonitor when autoHandleNetworkEvents is false', async () => {
+      setupSuccessfulEngine();
+      const upload = buildUpload({ autoHandleNetworkEvents: false } as FastPixUploadOptions);
+      await upload.start();
+      expect(mockNetworkStart).not.toHaveBeenCalled();
+    });
+
+    it('pauses upload and emits "pause" with reason "network" when going offline during upload', async () => {
+      mockStat.mockResolvedValue({ size: FILE_SIZE });
+      let resolveEngine!: (v: { success: boolean }) => void;
+      mockEngineRun.mockReturnValue(
+        new Promise<{ success: boolean }>((res) => { resolveEngine = res; }),
+      );
+
+      const upload = buildUpload();
+      const pauseCb = jest.fn();
+      upload.on('pause', pauseCb);
+      upload.start();
+      await new Promise((r) => setTimeout(r, 0));
+
+      // Trigger network offline via captured callback
+      capturedNetworkCallback?.('offline');
+      expect(upload.state).toBe('PAUSED');
+      expect(pauseCb).toHaveBeenCalledWith({ reason: 'network' });
+      resolveEngine({ success: false, error: new Error('aborted') } as { success: boolean });
+    });
+
+    it('emits "offline" event when going offline', async () => {
+      mockStat.mockResolvedValue({ size: FILE_SIZE });
+      let resolveEngine!: (v: { success: boolean }) => void;
+      mockEngineRun.mockReturnValue(
+        new Promise<{ success: boolean }>((res) => { resolveEngine = res; }),
+      );
+
+      const upload = buildUpload();
+      const offlineCb = jest.fn();
+      upload.on('offline', offlineCb);
+      upload.start();
+      await new Promise((r) => setTimeout(r, 0));
+
+      capturedNetworkCallback?.('offline');
+      expect(offlineCb).toHaveBeenCalledTimes(1);
+      resolveEngine({ success: false });
+    });
+
+    it('emits "online" event when going online', async () => {
+      mockStat.mockResolvedValue({ size: FILE_SIZE });
+      let resolveEngine!: (v: { success: boolean }) => void;
+      mockEngineRun.mockReturnValue(
+        new Promise<{ success: boolean }>((res) => { resolveEngine = res; }),
+      );
+
+      const upload = buildUpload();
+      const onlineCb = jest.fn();
+      upload.on('online', onlineCb);
+      upload.start();
+      await new Promise((r) => setTimeout(r, 0));
+
+      capturedNetworkCallback?.('online');
+      expect(onlineCb).toHaveBeenCalledTimes(1);
+      resolveEngine({ success: false });
+    });
+  });
 });

@@ -1,71 +1,91 @@
+import { UploadEngine } from '../src/core/UploadEngine';
+import type { UploadEngineOptions } from '../src/core/UploadEngine';
+
+// ── Mock logger ───────────────────────────────────────────────────────────────
+jest.mock('../utils/logger', () => ({
+  log: jest.fn(),
+  info: jest.fn(),
+  warn: jest.fn(),
+}));
+
+// ── Mock ChunkEngine ──────────────────────────────────────────────────────────
+jest.mock('./ChunkEngine', () => ({
+  buildChunkListFromOffset: jest.fn(),
+  buildContentRangeHeader: jest.fn(
+    (chunk: { start: number; end: number; totalSize: number }) =>
+      `bytes ${chunk.start}-${chunk.end - 1}/${chunk.totalSize}`,
+  ),
+}));
+
+import { buildChunkListFromOffset } from '../src/core/ChunkEngine';
+
+// ── Mock react-native-blob-util ───────────────────────────────────────────────
+const mockSlice = jest.fn();
+const mockLs = jest.fn();
+const mockUnlink = jest.fn();
+const mockExists = jest.fn();
+const mockDf = jest.fn();
+const mockCancel = jest.fn();
+
+// Holds the uploadProgress callback registered by the engine
+let uploadProgressCallback: ((written: number, _total: number) => void) | null = null;
+
+interface MockRequest {
+  uploadProgress: jest.Mock;
+  cancel: jest.Mock;
+  then: jest.Mock;
+}
+
+const mockFetch = jest.fn().mockImplementation(() => {
+  const request: MockRequest = {
+    uploadProgress: jest.fn((_opts: unknown, cb: (w: number, t: number) => void) => {
+      uploadProgressCallback = cb;
+      return request; // chainable
+    }),
+    cancel: mockCancel,
+    then: jest.fn(),
+  };
+
+  // Make `await request` resolve with a 200-range response by default
+  return Object.assign(
+    Promise.resolve({ respInfo: { status: 200 } }),
+    request,
+  );
+});
 
 jest.mock('react-native-blob-util', () => ({
   __esModule: true,
   default: {
     fs: {
-      readStream: jest.fn().mockImplementation(() =>
-        Promise.resolve({
-          open: jest.fn(),
-          onData: jest.fn((cb: (data: string) => void) => {
-            // Immediately emit a small base64 payload and end.
-            cb(Buffer.from('fake-chunk-data').toString('base64'));
-          }),
-          onError: jest.fn(),
-          onEnd: jest.fn((cb: () => void) => cb()),
-        }),
-      ),
+      dirs: { CacheDir: '/cache' },
+      stat: jest.fn(),
+      slice: mockSlice,
+      ls: mockLs,
+      unlink: mockUnlink,
+      exists: mockExists,
+      df: mockDf,
     },
-    base64: {
-      decode: jest.fn((b64: string) => Buffer.from(b64, 'base64').toString('binary')),
-    },
+    fetch: mockFetch,
+    wrap: jest.fn((p: string) => p),
   },
 }));
 
-jest.mock('axios', () => {
-  const actual = jest.requireActual('axios') as typeof import('axios');
-  const mockPut = jest.fn();
-  const mockIsCancel = jest.fn(() => false);
-  const mockCancelToken = {
-    source: jest.fn(() => ({
-      token: {},
-      cancel: jest.fn(),
-    })),
-  };
-
-  return {
-    ...actual,
-    put: mockPut,
-    isCancel: mockIsCancel,
-    CancelToken: mockCancelToken,
-    default: {
-      ...actual.default,
-      put: mockPut,
-      isCancel: mockIsCancel,
-      CancelToken: mockCancelToken,
-    },
-  };
-});
-
-// ── Imports (after mocks) ─────────────────────────────────────────────────────
-
-import axios from 'axios';
-import { UploadEngine } from '../src/core/UploadEngine';
-import type { UploadEngineOptions } from '../src/core/UploadEngine';
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
+const CHUNK_5MB = 5 * 1024; // KB
+const ONE_MB = 1024 * 1024;
 
-const FILE_SIZE_5MB = 5 * 1024 * 1024;
-const FILE_SIZE_12MB = 12 * 1024 * 1024;
-const CHUNK_SIZE_KB = 5 * 1024; // 5 MB
+function makeChunk(index: number, start: number, end: number, totalSize: number) {
+  return { index, start, end, totalSize };
+}
 
-function makeOpts(overrides: Partial<UploadEngineOptions> = {}): UploadEngineOptions {
+function buildDefaultOpts(overrides: Partial<UploadEngineOptions> = {}): UploadEngineOptions {
   return {
     endpoint: 'https://example.com/upload',
-    fileUri: 'file:///video.mp4',
-    fileSizeBytes: FILE_SIZE_5MB,
-    chunkSizeKB: CHUNK_SIZE_KB,
-    maxRetries: 3,
-    retryDelay: 1, // minimized down to 1ms to keep tests blistering fast
+    fileUri: '/storage/video.mp4',
+    fileSizeBytes: ONE_MB * 10,
+    chunkSizeKB: CHUNK_5MB,
+    maxRetries: 2,
+    retryDelay: 0,
     onChunkAttempt: jest.fn(),
     onChunkAttemptFailure: jest.fn(),
     onChunkSuccess: jest.fn(),
@@ -74,203 +94,321 @@ function makeOpts(overrides: Partial<UploadEngineOptions> = {}): UploadEngineOpt
   };
 }
 
-// const mockedAxios = axios as jest.Mocked<typeof axios>;
-
-// beforeEach(() => {
-//   jest.clearAllMocks();
-// });
-
-const mockedAxios = axios as jest.Mocked<typeof axios>;
-
-beforeEach(() => {
-  jest.clearAllMocks();
-  // 🟢 Mute the console warnings so they don't flood your terminal output
-  jest.spyOn(console, 'warn').mockImplementation(() => {});
-});
-
-afterEach(() => {
-  // 🟢 Restore the original console behavior after each test completes
-  (console.warn as jest.Mock).mockRestore();
-});
-
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
+// ─────────────────────────────────────────────
 describe('UploadEngine', () => {
-  describe('successful upload', () => {
-    it('returns { success: true } for a single-chunk file', async () => {
-      mockedAxios.put.mockResolvedValueOnce({ status: 200 });
+  let opts: UploadEngineOptions;
+  let engine: UploadEngine;
 
-      const opts = makeOpts({ fileSizeBytes: FILE_SIZE_5MB });
-      const engine = new UploadEngine(opts);
-      const result = await engine.run();
+  beforeEach(() => {
+    jest.clearAllMocks();
+    uploadProgressCallback = null;
 
-      expect(result.success).toBe(true);
-      expect(result.error).toBeUndefined();
+    // Default: plenty of disk space
+    mockDf.mockResolvedValue({ free: 500 * ONE_MB });
+    // Default: no stale files
+    mockLs.mockResolvedValue([]);
+    // Default: slice succeeds
+    mockSlice.mockResolvedValue(undefined);
+    // Default: temp file cleanup
+    mockExists.mockResolvedValue(true);
+    mockUnlink.mockResolvedValue(undefined);
+
+    opts = buildDefaultOpts();
+    engine = new UploadEngine(opts);
+  });
+
+  // ── setStartOffset / abort ────────────────
+  describe('setStartOffset()', () => {
+    it('clamps negative offsets to 0', () => {
+      // No public getter, but run() should use 0 if set to negative
+      expect(() => engine.setStartOffset(-100)).not.toThrow();
     });
 
-    it('calls onProgress once per chunk', async () => {
-      mockedAxios.put.mockResolvedValue({ status: 308 }); // intermediate
-      mockedAxios.put
-        .mockResolvedValueOnce({ status: 308 })
-        .mockResolvedValueOnce({ status: 308 })
-        .mockResolvedValueOnce({ status: 200 }); // last chunk
-
-      const onProgress = jest.fn();
-      const opts = makeOpts({
-        fileSizeBytes: FILE_SIZE_12MB, // 3 × 5 MB chunks (last is 2 MB)
-        onProgress,
-      });
-      const engine = new UploadEngine(opts);
-      await engine.run();
-
-      // 12 MB file with 5 MB chunks → 3 chunks → 3 progress calls
-      expect(onProgress).toHaveBeenCalledTimes(3);
-    });
-
-    it('calls onChunkSuccess with correct chunkIndex and offset', async () => {
-      mockedAxios.put.mockResolvedValue({ status: 200 });
-
-      const onChunkSuccess = jest.fn();
-      const opts = makeOpts({ fileSizeBytes: FILE_SIZE_5MB, onChunkSuccess });
-      const engine = new UploadEngine(opts);
-      await engine.run();
-
-      expect(onChunkSuccess).toHaveBeenCalledWith(0, FILE_SIZE_5MB);
-    });
-
-    it('calls onChunkAttempt before each upload attempt', async () => {
-      mockedAxios.put.mockResolvedValue({ status: 200 });
-
-      const onChunkAttempt = jest.fn();
-      const opts = makeOpts({ fileSizeBytes: FILE_SIZE_5MB, onChunkAttempt });
-      const engine = new UploadEngine(opts);
-      await engine.run();
-
-      expect(onChunkAttempt).toHaveBeenCalledWith(0, 1);
-    });
-
-    it('starts from the correct chunk when setStartChunkIndex is set', async () => {
-      // 12 MB → 3 chunks. Start from chunk 1 (i.e. resume after first chunk).
-      mockedAxios.put
-        .mockResolvedValueOnce({ status: 308 })
-        .mockResolvedValueOnce({ status: 200 });
-
-      const onChunkSuccess = jest.fn();
-      const opts = makeOpts({
-        fileSizeBytes: FILE_SIZE_12MB,
-        onChunkSuccess,
-      });
-      const engine = new UploadEngine(opts);
-      engine.setStartOffset(1); // skip chunk 0
-      await engine.run();
-
-      // Only chunks 1 and 2 should have been uploaded.
-      expect(onChunkSuccess).toHaveBeenCalledTimes(2);
-      expect(onChunkSuccess.mock.calls[0]?.[0]).toBe(1); // first call = chunk index 1
+    it('accepts a valid positive offset', () => {
+      expect(() => engine.setStartOffset(ONE_MB * 5)).not.toThrow();
     });
   });
 
-  describe('retry with exponential back-off', () => {
-    it('retries on failure and succeeds within maxRetries', async () => {
-      // Fail twice, then succeed on third attempt.
-      mockedAxios.put
-        .mockRejectedValueOnce(new Error('Network error'))
-        .mockRejectedValueOnce(new Error('Network error'))
-        .mockResolvedValueOnce({ status: 200 });
-
-      const onChunkAttemptFailure = jest.fn();
-      const opts = makeOpts({
-        fileSizeBytes: FILE_SIZE_5MB,
-        maxRetries: 3,
-        onChunkAttemptFailure,
-      });
-      const engine = new UploadEngine(opts);
-      const result = await engine.run();
-
-      expect(result.success).toBe(true);
-      // Two failures before success.
-      expect(onChunkAttemptFailure).toHaveBeenCalledTimes(2);
+  describe('abort()', () => {
+    it('does not throw when called before run()', () => {
+      expect(() => engine.abort()).not.toThrow();
     });
+  });
 
-    it('returns { success: false } after exhausting all retries', async () => {
-      mockedAxios.put.mockRejectedValue(new Error('Persistent server error'));
+  // ── disk space guard ──────────────────────
+  describe('disk space check', () => {
+    it('returns failure when free space is insufficient', async () => {
+      mockDf.mockResolvedValue({ free: 1024 }); // 1 KB — way too little
+      (buildChunkListFromOffset as jest.Mock).mockReturnValue([]);
 
-      const opts = makeOpts({ fileSizeBytes: FILE_SIZE_5MB, maxRetries: 2 });
-      const engine = new UploadEngine(opts);
       const result = await engine.run();
-
       expect(result.success).toBe(false);
-      expect(result.error?.message).toContain('[FastPix]');
+      expect(result.error?.message).toMatch(/Not enough storage/);
     });
 
-    it('calls onChunkAttemptFailure with incrementing attempt numbers', async () => {
-      mockedAxios.put
-        .mockRejectedValueOnce(new Error('err'))
-        .mockRejectedValueOnce(new Error('err'))
-        .mockResolvedValueOnce({ status: 200 });
+    it('proceeds when free space is sufficient', async () => {
+      mockDf.mockResolvedValue({ free: 500 * ONE_MB });
+      (buildChunkListFromOffset as jest.Mock).mockReturnValue([]); // 0 chunks = instant success
 
-      const onChunkAttemptFailure = jest.fn();
-      const opts = makeOpts({
-        fileSizeBytes: FILE_SIZE_5MB,
-        maxRetries: 3,
-        onChunkAttemptFailure,
-      });
-      const engine = new UploadEngine(opts);
+      const result = await engine.run();
+      expect(result.success).toBe(true);
+    });
+
+    it('proceeds when df() fails (fails open)', async () => {
+      mockDf.mockRejectedValue(new Error('df failed'));
+      (buildChunkListFromOffset as jest.Mock).mockReturnValue([]);
+
+      const result = await engine.run();
+      expect(result.success).toBe(true);
+    });
+
+    it('uses internal_free when free is not a number', async () => {
+      mockDf.mockResolvedValue({ internal_free: 500 * ONE_MB });
+      (buildChunkListFromOffset as jest.Mock).mockReturnValue([]);
+
+      const result = await engine.run();
+      expect(result.success).toBe(true);
+    });
+  });
+
+  // ── stale temp file cleanup ───────────────
+  describe('stale temp file cleanup', () => {
+    it('deletes files prefixed with "fastpix_chunk_"', async () => {
+      mockLs.mockResolvedValue(['fastpix_chunk_123_456', 'other_file.tmp']);
+      (buildChunkListFromOffset as jest.Mock).mockReturnValue([]);
+
       await engine.run();
 
-      expect(onChunkAttemptFailure).toHaveBeenNthCalledWith(
-        1,
-        0,   // chunkIndex
-        1,   // attemptNumber
-        expect.any(Error),
-      );
-      expect(onChunkAttemptFailure).toHaveBeenNthCalledWith(
-        2,
-        0,
-        2,
-        expect.any(Error),
-      );
+      expect(mockUnlink).toHaveBeenCalledWith('/cache/fastpix_chunk_123_456');
+      expect(mockUnlink).not.toHaveBeenCalledWith(expect.stringContaining('other_file'));
+    });
+
+    it('skips cleanup when ls returns no stale files', async () => {
+      mockLs.mockResolvedValue(['other_file.tmp']);
+      (buildChunkListFromOffset as jest.Mock).mockReturnValue([]);
+
+      await engine.run();
+      expect(mockUnlink).not.toHaveBeenCalled();
     });
   });
 
-  // describe('abort', () => {
-  //   it('returns { success: false } when aborted before upload starts', async () => {
-  //     // Make axios hang so we can abort before it resolves.
-  //     mockedAxios.put.mockImplementation(
-  //       () => new Promise(() => {}), // never resolves
-  //     );
+  // ── successful single-chunk upload ────────
+  describe('single chunk — success', () => {
+    it('returns { success: true } when chunk uploads with HTTP 200', async () => {
+      const chunk = makeChunk(0, 0, ONE_MB * 5, ONE_MB * 5);
+      (buildChunkListFromOffset as jest.Mock).mockReturnValue([chunk]);
+      mockFetch.mockReturnValue(
+        Object.assign(Promise.resolve({ respInfo: { status: 200 } }), {
+          uploadProgress: jest.fn().mockReturnThis(),
+          cancel: mockCancel,
+        }),
+      );
 
-  //     const opts = makeOpts({ fileSizeBytes: FILE_SIZE_5MB });
-  //     const engine = new UploadEngine(opts);
+      const result = await engine.run();
+      expect(result.success).toBe(true);
+    });
 
-  //     const runPromise = engine.run();
-  //     engine.abort();
+    it('calls onChunkAttempt once per chunk', async () => {
+      const chunk = makeChunk(0, 0, ONE_MB * 5, ONE_MB * 5);
+      (buildChunkListFromOffset as jest.Mock).mockReturnValue([chunk]);
+      mockFetch.mockReturnValue(
+        Object.assign(Promise.resolve({ respInfo: { status: 200 } }), {
+          uploadProgress: jest.fn().mockReturnThis(),
+          cancel: mockCancel,
+        }),
+      );
 
-  //     await flushAsync(); 
+      await engine.run();
+      expect(opts.onChunkAttempt).toHaveBeenCalledTimes(1);
+      expect(opts.onChunkAttempt).toHaveBeenCalledWith(0, 1, 1);
+    });
 
-  //     const result = await runPromise;
-  //     expect(result.success).toBe(false);
-  //     expect(result.error?.message).toContain('aborted');
-  //   });
-  // });
-    describe('abort', () => {
-    it('returns { success: false } when aborted before upload starts', async () => {
-      // 1. Setup the mock to remain pending
-      mockedAxios.put.mockImplementation(() => new Promise(() => {}));
+    it('calls onChunkSuccess with correct offset', async () => {
+      const chunk = makeChunk(0, 0, ONE_MB * 5, ONE_MB * 5);
+      (buildChunkListFromOffset as jest.Mock).mockReturnValue([chunk]);
+      mockFetch.mockReturnValue(
+        Object.assign(Promise.resolve({ respInfo: { status: 200 } }), {
+          uploadProgress: jest.fn().mockReturnThis(),
+          cancel: mockCancel,
+        }),
+      );
 
-      const opts = makeOpts({ fileSizeBytes: FILE_SIZE_5MB });
-      const engine = new UploadEngine(opts);
+      await engine.run();
+      expect(opts.onChunkSuccess).toHaveBeenCalledWith(0, ONE_MB * 5);
+    });
 
-      // 2. Run the engine, trigger the abort flag immediately, and flush the microtasks
-      const runPromise = engine.run();
-      engine.abort();
+    it('treats HTTP 308 as success', async () => {
+      const chunk = makeChunk(0, 0, ONE_MB * 5, ONE_MB * 5);
+      (buildChunkListFromOffset as jest.Mock).mockReturnValue([chunk]);
+      mockFetch.mockReturnValue(
+        Object.assign(Promise.resolve({ respInfo: { status: 308 } }), {
+          uploadProgress: jest.fn().mockReturnThis(),
+          cancel: mockCancel,
+        }),
+      );
 
-      const result = await runPromise;
+      const result = await engine.run();
+      expect(result.success).toBe(true);
+    });
+  });
+
+  // ── multi-chunk upload ────────────────────
+  describe('multi-chunk upload', () => {
+    it('processes all chunks sequentially and returns success', async () => {
+      const chunks = [
+        makeChunk(0, 0, ONE_MB * 5, ONE_MB * 10),
+        makeChunk(1, ONE_MB * 5, ONE_MB * 10, ONE_MB * 10),
+      ];
+      (buildChunkListFromOffset as jest.Mock).mockReturnValue(chunks);
+      mockFetch.mockReturnValue(
+        Object.assign(Promise.resolve({ respInfo: { status: 200 } }), {
+          uploadProgress: jest.fn().mockReturnThis(),
+          cancel: mockCancel,
+        }),
+      );
+
+      const result = await engine.run();
+      expect(result.success).toBe(true);
+      expect(opts.onChunkSuccess).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // ── retry logic ───────────────────────────
+  describe('retry logic', () => {
+    it('retries on network failure and succeeds eventually', async () => {
+      const chunk = makeChunk(0, 0, ONE_MB * 5, ONE_MB * 5);
+      (buildChunkListFromOffset as jest.Mock).mockReturnValue([chunk]);
+
+      let callCount = 0;
+      mockFetch.mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          return Object.assign(Promise.reject(new Error('Network error')), {
+            uploadProgress: jest.fn().mockReturnThis(),
+            cancel: mockCancel,
+          });
+        }
+        return Object.assign(Promise.resolve({ respInfo: { status: 200 } }), {
+          uploadProgress: jest.fn().mockReturnThis(),
+          cancel: mockCancel,
+        });
+      });
+
+      const result = await engine.run();
+      expect(result.success).toBe(true);
+      expect(opts.onChunkAttemptFailure).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns failure after exhausting all retries', async () => {
+      const chunk = makeChunk(0, 0, ONE_MB * 5, ONE_MB * 5);
+      (buildChunkListFromOffset as jest.Mock).mockReturnValue([chunk]);
+
+      mockFetch.mockReturnValue(
+        Object.assign(Promise.reject(new Error('Persistent error')), {
+          uploadProgress: jest.fn().mockReturnThis(),
+          cancel: mockCancel,
+        }),
+      );
+
+      const result = await engine.run();
       expect(result.success).toBe(false);
-      expect(result.error?.message).toContain('aborted');
+      expect(result.error?.message).toMatch(/failed after/i);
+    });
+
+    it('calls onChunkAttemptFailure on each failed attempt', async () => {
+      const chunk = makeChunk(0, 0, ONE_MB * 5, ONE_MB * 5);
+      (buildChunkListFromOffset as jest.Mock).mockReturnValue([chunk]);
+      opts = buildDefaultOpts({ maxRetries: 2, retryDelay: 0 });
+      engine = new UploadEngine(opts);
+
+      mockFetch.mockReturnValue(
+        Object.assign(Promise.reject(new Error('fail')), {
+          uploadProgress: jest.fn().mockReturnThis(),
+          cancel: mockCancel,
+        }),
+      );
+
+      await engine.run();
+      // 2 retries → onChunkAttemptFailure called for each failed attempt (1 initial + 2 retries = 3 attempts, 2 failures before final)
+      expect(opts.onChunkAttemptFailure).toHaveBeenCalledTimes(2);
     });
   });
 
+  // ── HTTP error status ─────────────────────
+  describe('HTTP error status codes', () => {
+    it('treats HTTP 400 as a failure', async () => {
+      const chunk = makeChunk(0, 0, ONE_MB * 5, ONE_MB * 5);
+      (buildChunkListFromOffset as jest.Mock).mockReturnValue([chunk]);
+
+      mockFetch.mockReturnValue(
+        Object.assign(Promise.resolve({ respInfo: { status: 400 } }), {
+          uploadProgress: jest.fn().mockReturnThis(),
+          cancel: mockCancel,
+        }),
+      );
+
+      const result = await engine.run();
+      expect(result.success).toBe(false);
+      expect(result.error?.message).toMatch(/HTTP 400/);
+    });
+
+    it('treats HTTP 500 as a failure', async () => {
+      const chunk = makeChunk(0, 0, ONE_MB * 5, ONE_MB * 5);
+      (buildChunkListFromOffset as jest.Mock).mockReturnValue([chunk]);
+
+      mockFetch.mockReturnValue(
+        Object.assign(Promise.resolve({ respInfo: { status: 500 } }), {
+          uploadProgress: jest.fn().mockReturnThis(),
+          cancel: mockCancel,
+        }),
+      );
+
+      const result = await engine.run();
+      expect(result.success).toBe(false);
+    });
+  });
+
+  // ── abort mid-upload ──────────────────────
+  describe('abort during upload', () => {
+    it('returns { success: false } with aborted message when aborted before first chunk', async () => {
+      const chunk = makeChunk(0, 0, ONE_MB * 5, ONE_MB * 5);
+      (buildChunkListFromOffset as jest.Mock).mockReturnValue([chunk]);
+
+      mockSlice.mockImplementation(async () => {
+        engine.abort();
+      });
+
+      mockFetch.mockReturnValue(
+        Object.assign(Promise.resolve({ respInfo: { status: 200 } }), {
+          uploadProgress: jest.fn().mockReturnThis(),
+          cancel: mockCancel,
+        }),
+      );
+
+      const result = await engine.run();
+      expect(result.success).toBe(false);
+      expect(result.error?.message).toMatch(/aborted/i);
+    });
+  });
+
+  // ── temp file lifecycle ───────────────────
+  describe('temp file lifecycle', () => {
+    it('deletes the temp file after a successful chunk upload', async () => {
+      const chunk = makeChunk(0, 0, ONE_MB * 5, ONE_MB * 5);
+      (buildChunkListFromOffset as jest.Mock).mockReturnValue([chunk]);
+      mockExists.mockResolvedValue(true);
+
+      mockFetch.mockReturnValue(
+        Object.assign(Promise.resolve({ respInfo: { status: 200 } }), {
+          uploadProgress: jest.fn().mockReturnThis(),
+          cancel: mockCancel,
+        }),
+      );
+
+      await engine.run();
+      // Give microtasks a chance to run the finally cleanup
+      await new Promise((r) => setTimeout(r, 0));
+      expect(mockUnlink).toHaveBeenCalled();
+    });
+  });
 });
-
