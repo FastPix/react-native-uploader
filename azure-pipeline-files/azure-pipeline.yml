@@ -39,17 +39,6 @@ stages:
           sonar.sources=.
           sonar.sourceEncoding=UTF-8
 
-    # Install dependencies if required
-    - script: |
-        npm ci
-      displayName: 'Install Dependencies'
-
-    # Build the React Native project
-    - script: |
-        echo "Running build"
-        npm run build || true
-      displayName: 'Build Step'
-
     - task: SonarCloudAnalyze@3
       displayName: 'Run SonarCloud Code Analysis'
 
