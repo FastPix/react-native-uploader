@@ -1,6 +1,6 @@
 import { TypedEventEmitter } from '../src/utils/EventEmitter';
 
-jest.mock('../utils/logger', () => ({
+jest.mock('../src/utils/logger', () => ({
   log: jest.fn(),
   info: jest.fn(),
   warn: jest.fn(),

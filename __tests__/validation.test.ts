@@ -9,7 +9,7 @@ import {
 } from '../src/utils/validation';
 import type { FastPixUploadOptions } from '../src/types';
 
-jest.mock('../utils/logger', () => ({
+jest.mock('../src/utils/logger', () => ({
   log: jest.fn(),
   info: jest.fn(),
   warn: jest.fn(),

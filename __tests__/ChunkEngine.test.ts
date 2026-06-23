@@ -6,7 +6,7 @@ import {
 import type { ChunkMeta } from '../src/types';
 
 // Mock logger to suppress output during tests
-jest.mock('../utils/logger', () => ({
+jest.mock('../src/utils/logger', () => ({
   log: jest.fn(),
   info: jest.fn(),
   warn: jest.fn(),

@@ -2,14 +2,14 @@ import { UploadEngine } from '../src/core/UploadEngine';
 import type { UploadEngineOptions } from '../src/core/UploadEngine';
 
 // ── Mock logger ───────────────────────────────────────────────────────────────
-jest.mock('../utils/logger', () => ({
+jest.mock('../src/utils/logger', () => ({
   log: jest.fn(),
   info: jest.fn(),
   warn: jest.fn(),
 }));
 
 // ── Mock ChunkEngine ──────────────────────────────────────────────────────────
-jest.mock('./ChunkEngine', () => ({
+jest.mock('../src/core/ChunkEngine', () => ({
   buildChunkListFromOffset: jest.fn(),
   buildContentRangeHeader: jest.fn(
     (chunk: { start: number; end: number; totalSize: number }) =>

@@ -2,17 +2,17 @@ import { FastPixUpload } from '../src/core/FastPixUpload';
 import type { FastPixUploadOptions } from '../src/types';
 
 // Logger 
-jest.mock('../utils/logger', () => ({
+jest.mock('../src/utils/logger', () => ({
   log: jest.fn(),
   info: jest.fn(),
   warn: jest.fn(),
 }));
 
 // SDK config 
-jest.mock('../utils/config', () => ({ SDK_CONFIG: { enableLogs: false } }));
+jest.mock('../src/utils/config', () => ({ SDK_CONFIG: { enableLogs: false } }));
 
 // validation
-jest.mock('../utils/validation', () => ({
+jest.mock('../src/utils/validation', () => ({
   validateAndNormalizeOptions: jest.fn((opts: FastPixUploadOptions) => ({
     endpoint: opts.endpoint ?? 'https://example.com/upload',
     fileUri: opts.fileUri ?? 'file:///video.mp4',
@@ -29,7 +29,7 @@ jest.mock('../utils/validation', () => ({
 }));
 
 //  ChunkEngine
-jest.mock('./ChunkEngine', () => ({
+jest.mock('../src/core/ChunkEngine', () => ({
   chunkIndexForOffset: jest.fn(() => 0),
 }));
 
@@ -47,7 +47,7 @@ let mockEngineRun = jest.fn();
 let mockEngineAbort = jest.fn();
 let mockEngineSetStartOffset = jest.fn();
 
-jest.mock('./UploadEngine', () => ({
+jest.mock('../src/core/UploadEngine', () => ({
   UploadEngine: jest.fn().mockImplementation(() => ({
     run: mockEngineRun,
     abort: mockEngineAbort,
@@ -65,7 +65,7 @@ const mockNetworkOnChange = jest.fn((cb: (s: string) => void) => {
   return jest.fn(); // cleanup noop
 });
 
-jest.mock('./NetworkMonitor', () => ({
+jest.mock('../src/core/NetworkMonitor', () => ({
   NetworkMonitor: jest.fn().mockImplementation(() => ({
     start: mockNetworkStart,
     stop: mockNetworkStop,
