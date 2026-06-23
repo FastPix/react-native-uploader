@@ -1,3 +1,7 @@
+dependencyLocking {
+    lockAllConfigurations()
+}
+
 buildscript {
     ext {
         buildToolsVersion = "36.0.0"
@@ -16,10 +20,6 @@ buildscript {
         classpath("com.facebook.react:react-native-gradle-plugin")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
     }
-}
-
-dependencyLocking {
-    lockAllConfigurations()
 }
 
 apply plugin: "com.facebook.react.rootproject"
