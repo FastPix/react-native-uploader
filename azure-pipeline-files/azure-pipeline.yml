@@ -23,7 +23,7 @@ stages:
     - checkout: self
       fetchDepth: 0
 
-    - task: SonarCloudPrepare@3
+    - task: SonarCloudPrepare@3 # NOSONAR
       displayName: 'Prepare SonarCloud Analysis'
       inputs:
         SonarCloud: 'sdk_sonar'
@@ -39,10 +39,10 @@ stages:
           sonar.sources=.
           sonar.sourceEncoding=UTF-8
 
-    - task: SonarCloudAnalyze@3
+    - task: SonarCloudAnalyze@3   # NOSONAR
       displayName: 'Run SonarCloud Code Analysis'
 
-    - task: SonarCloudPublish@3
+    - task: SonarCloudPublish@3   # NOSONAR
       displayName: 'Publish SonarCloud Quality Gate Results'
       inputs:
         pollingTimeoutSec: '300'

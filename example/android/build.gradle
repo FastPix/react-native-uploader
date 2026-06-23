@@ -18,4 +18,8 @@ buildscript {
     }
 }
 
+dependencyLocking {
+    lockAllConfigurations()
+}
+
 apply plugin: "com.facebook.react.rootproject"
