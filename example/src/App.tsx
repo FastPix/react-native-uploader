@@ -33,7 +33,6 @@ export default function App() {
   const [bytesUploaded, setBytesUploaded] = useState(0);
   const [bytesTotal, setBytesTotal] = useState(0);
   const [speed, setSpeed] = useState('0 KB/s');
-  const [eta, setEta] = useState('--');
   const [chunkSuccess, setChunkSuccess] = useState(0);
   const [chunkRetries, setChunkRetries] = useState(0);
   const [failures, setFailures] = useState(0);
@@ -82,7 +81,6 @@ export default function App() {
     setChunkRetries(0);
     setFailures(0);
     setSpeed('0 KB/s');
-    setEta('--');
   };
 
   const pickAndUpload = async () => {
@@ -149,12 +147,6 @@ export default function App() {
           const uploadedDiff = bytesUploaded - speedRef.current.bytes;
           const kbps = uploadedDiff / elapsed / 1024;
           setSpeed(`${kbps.toFixed(2)} KB/s`);
-
-          if (kbps > 0) {
-            const remainingBytes = bytesTotal - bytesUploaded;
-            const remainingSeconds = remainingBytes / (kbps * 1024);
-            setEta(`${Math.ceil(remainingSeconds)} sec`);
-          }
 
           speedRef.current = {bytes: bytesUploaded, time: now};
         }
@@ -288,8 +280,15 @@ export default function App() {
           <Text>
             {formatBytes(bytesUploaded)} / {formatBytes(bytesTotal)}
           </Text>
-          {/* <Text>Speed: {speed}</Text>
-          <Text>ETA: {eta}</Text> */}
+          <Text>Speed: {speed}</Text>
+        </View>
+
+        {/* Chunk Statistics */}
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Chunk Statistics</Text>
+          <Text>Successful Chunks: {chunkSuccess}</Text>
+          <Text>Chunk Retries: {chunkRetries}</Text>
+          <Text>Failures: {failures}</Text>
         </View>
 
         {/* Buttons */}
