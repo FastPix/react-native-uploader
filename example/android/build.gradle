@@ -1,5 +1,7 @@
-dependencyLocking {
-    lockAllConfigurations()
+allprojects {
+    dependencyLocking {
+        lockAllConfigurations()
+    }
 }
 
 buildscript {
