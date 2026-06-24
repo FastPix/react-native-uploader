@@ -339,36 +339,13 @@ export class FastPixUpload {
         },
       });
 
-      // 308 = resumable upload incomplete, server tells us uploaded range
       if (response.status === 308) {
-        const rangeHeader =
-          response.headers.get('range') ?? response.headers.get('Range');
-
-        if (rangeHeader) {
-          const match = /bytes=0-(\d+)/i.exec(rangeHeader);
-          if (match?.[1]) {
-            const serverOffset = Number.parseInt(match[1], 10) + 1;
-
-            if (Number.isFinite(serverOffset) && serverOffset >= 0) {
-              if (serverOffset !== this._uploadedOffset) {
-                info(
-                  `[FastPix] Resume offset corrected: local=${this._uploadedOffset} → server=${serverOffset}`,
-                );
-                this._uploadedOffset = serverOffset;
-              }
-            }
-          }
-        }
-
+        this._handleResumeProbeResponse(response);
         return;
       }
 
-      // Upload already complete
-      if (response.status >= 200 && response.status < 300) {
-        this._uploadedOffset = this._fileSizeBytes;
-        this._transitionTo('COMPLETED');
-        this._emitter.emit('success', undefined);
-        this._networkMonitor.stop();
+      if (response.ok) {
+        this._markUploadCompletedFromResumeProbe();
         return;
       }
 
@@ -383,6 +360,33 @@ export class FastPixUpload {
     }
   }
 
+  private _handleResumeProbeResponse(response: Response): void {
+    const rangeHeader =
+      response.headers.get('range') ?? response.headers.get('Range');
+
+    if (!rangeHeader) return;
+
+    const match = /bytes=0-(\d+)/i.exec(rangeHeader);
+    if (!match?.[1]) return;
+
+    const serverOffset = Number.parseInt(match[1], 10) + 1;
+    if (!Number.isFinite(serverOffset) || serverOffset < 0) return;
+
+    if (serverOffset !== this._uploadedOffset) {
+      info(
+        `[FastPix] Resume offset corrected: local=${this._uploadedOffset} → server=${serverOffset}`,
+      );
+      this._uploadedOffset = serverOffset;
+    }
+  }
+
+  private _markUploadCompletedFromResumeProbe(): void {
+    this._uploadedOffset = this._fileSizeBytes;
+    this._transitionTo('COMPLETED');
+    this._emitter.emit('success', undefined);
+    this._networkMonitor.stop();
+  }
+  
   private _transitionTo(next: UploadState): void {
     const allowed = VALID_TRANSITIONS[this._state];
 

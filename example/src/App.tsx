@@ -42,6 +42,7 @@ export default function App() {
   const [retryDelay, setRetryDelay] = useState('1000');
   const scrollRef = useRef<ScrollView>(null);
   const speedRef = useRef({ bytes: 0, time: Date.now() });
+  const logCounterRef = useRef(0);
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener(state => {
@@ -52,9 +53,9 @@ export default function App() {
 
   const addLog = (message: string, type: LogType = 'info') => {
     const time = new Date().toLocaleTimeString();
-
+    logCounterRef.current += 1;
     const log: LogEntry = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      id: `${Date.now()}-${logCounterRef.current}`,
       time,
       message,
       type,

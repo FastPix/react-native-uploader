@@ -34,6 +34,8 @@ export declare class FastPixUpload {
     private _runEngine;
     private _setupNetworkHandling;
     private _syncResumeOffset;
+    private _handleResumeProbeResponse;
+    private _markUploadCompletedFromResumeProbe;
     private _transitionTo;
     private _handleFatalError;
 }
