@@ -56,7 +56,7 @@ export function validateAndNormalizeOptions(
   // chunkSize 
   const chunkSize = opts.chunkSize ?? DEFAULT_CHUNK_SIZE_KB;
   if (typeof chunkSize !== 'number' || !Number.isFinite(chunkSize)) {
-    throw new Error('[FastPix] "chunkSize" must be a finite number (in KB).');
+    throw new TypeError('[FastPix] "chunkSize" must be a finite number (in KB).');
   }
   if (chunkSize < MIN_CHUNK_SIZE_KB) {
     throw new Error(

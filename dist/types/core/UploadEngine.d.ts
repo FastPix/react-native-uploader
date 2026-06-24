@@ -26,6 +26,10 @@ export declare class UploadEngine {
     setStartOffset(offset: number): void;
     abort(): void;
     run(): Promise<EngineResult>;
+    private _uploadChunkWithRetry;
+    private _handleChunkUploadError;
+    private _abortedResult;
+    private _isAbortError;
     private _cleanupStaleTempFiles;
     private _checkDiskSpace;
     private _clearSyntheticTicker;

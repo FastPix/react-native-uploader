@@ -79,103 +79,171 @@ export class UploadEngine {
     this._clearSyntheticTicker();
   }
 
-  async run(): Promise<EngineResult> {
-    this._abortController = new AbortController();
-    const signal = this._abortController.signal;
+async run(): Promise<EngineResult> {
+  this._abortController = new AbortController();
+  const signal = this._abortController.signal;
 
-    const {
-      endpoint,
-      fileUri,
-      fileSizeBytes,
-      chunkSizeKB,
-      maxRetries,
-      retryDelay,
-      onChunkAttempt,
-      onChunkAttemptFailure,
-      onChunkSuccess,
-      onProgress,
-    } = this._opts;
+  const {
+    fileSizeBytes,
+    chunkSizeKB,
+  } = this._opts;
 
-    await this._cleanupStaleTempFiles();
+  await this._cleanupStaleTempFiles();
 
-    const diskError = await this._checkDiskSpace(chunkSizeKB * 1024);
-    if (diskError) {
-      return { success: false, error: diskError };
-    }
-
-    const chunks = buildChunkListFromOffset(fileSizeBytes, chunkSizeKB,this._startOffset);
-
-    for (let i = 0; i < chunks.length; i++) {
-      if (signal.aborted) {
-        return { success: false, error: new Error('Upload was aborted.') };
-      }
-
-      const chunk = chunks[i];
-      if (!chunk) continue;
-
-      let attempt = 0;
-      let uploaded = false;
-
-      while (!uploaded) {
-        if (signal.aborted) {
-          return { success: false, error: new Error('Upload was aborted.') };
-        }
-
-        onChunkAttempt(chunk.index, attempt + 1, chunks.length);
-
-        try {
-          await this._uploadChunk(chunk, endpoint, fileUri, signal, chunks.length, onProgress);
-          onChunkSuccess(chunk.index, chunk.end);
-          uploaded = true;
-
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          const isAbort =
-            signal.aborted ||
-            message === 'AbortError' ||
-            message === 'Upload aborted.' ||
-            message.toLowerCase().includes('cancel');
-
-          if (isAbort) {
-            return { success: false, error: new Error('Upload was aborted.') };
-          }
-
-          attempt += 1;
-          const chunkError =
-            err instanceof Error ? err : new Error('Unknown chunk upload error.');
-
-          onChunkAttemptFailure(chunk.index, attempt, chunkError);
-
-          if (attempt > maxRetries) {
-            return {
-              success: false,
-              error: new Error(
-                `[FastPix] Chunk ${chunk.index} failed after ${maxRetries} ` +
-                  `retries: ${chunkError.message}`,
-              ),
-            };
-          }
-
-          const backoffMs = retryDelay * Math.pow(2, attempt - 1);
-          console.warn(
-            `[FastPix] Chunk ${chunk.index} failed (attempt ${attempt}/${maxRetries}). ` +
-              `Retrying in ${backoffMs} ms — ${chunkError.message}`,
-          );
-
-          try {
-            await sleep(backoffMs, signal);
-          } catch {
-            return {
-              success: false,
-              error: new Error('Upload was aborted during retry back-off.'),
-            };
-          }
-        }
-      }
-    }
-
-    return { success: true };
+  const diskError = await this._checkDiskSpace(chunkSizeKB * 1024);
+  if (diskError) {
+    return { success: false, error: diskError };
   }
+
+  const chunks = buildChunkListFromOffset(
+    fileSizeBytes,
+    chunkSizeKB,
+    this._startOffset,
+  );
+
+  for (const chunk of chunks) {
+    if (signal.aborted) {
+      return { success: false, error: new Error('Upload was aborted.') };
+    }
+
+    const result = await this._uploadChunkWithRetry(chunk, chunks.length, signal);
+    if (result) {
+      return result;
+    }
+  }
+
+  return { success: true };
+}
+
+private async _uploadChunkWithRetry(
+  chunk: ChunkMeta,
+  totalChunks: number,
+  signal: AbortSignal,
+): Promise<EngineResult | null> {
+  const {
+    endpoint,
+    fileUri,
+    onChunkAttempt,
+    onChunkSuccess,
+    onProgress,
+  } = this._opts;
+
+  let attempt = 0;
+
+  while (true) {
+    if (signal.aborted) {
+      return this._abortedResult();
+    }
+
+    onChunkAttempt(chunk.index, attempt + 1, totalChunks);
+
+    try {
+      await this._uploadChunk(
+        chunk,
+        endpoint,
+        fileUri,
+        signal,
+        totalChunks,
+        onProgress,
+      );
+
+      onChunkSuccess(chunk.index, chunk.end);
+      return null;
+    } catch (err) {
+      const result = await this._handleChunkUploadError(
+        err,
+        chunk,
+        attempt,
+        signal,
+      );
+
+      if (result?.retry) {
+        attempt = result.nextAttempt;
+        continue;
+      }
+
+      return result?.engineResult ?? null;
+    }
+  }
+}
+
+private async _handleChunkUploadError(
+  err: unknown,
+  chunk: ChunkMeta,
+  attempt: number,
+  signal: AbortSignal,
+): Promise<
+  | { retry: true; nextAttempt: number }
+  | { retry: false; engineResult: EngineResult }
+> {
+  const {
+    maxRetries,
+    retryDelay,
+    onChunkAttemptFailure,
+  } = this._opts;
+
+  if (this._isAbortError(err, signal)) {
+    return {
+      retry: false,
+      engineResult: this._abortedResult(),
+    };
+  }
+
+  const nextAttempt = attempt + 1;
+  const chunkError =
+    err instanceof Error ? err : new Error('Unknown chunk upload error.');
+
+  onChunkAttemptFailure(chunk.index, nextAttempt, chunkError);
+
+  if (nextAttempt > maxRetries) {
+    return {
+      retry: false,
+      engineResult: {
+        success: false,
+        error: new Error(
+          `[FastPix] Chunk ${chunk.index} failed after ${maxRetries} retries: ${chunkError.message}`,
+        ),
+      },
+    };
+  }
+
+  const backoffMs = retryDelay * Math.pow(2, nextAttempt - 1);
+  console.warn(
+    `[FastPix] Chunk ${chunk.index} failed (attempt ${nextAttempt}/${maxRetries}). ` +
+      `Retrying in ${backoffMs} ms — ${chunkError.message}`,
+  );
+
+  try {
+    await sleep(backoffMs, signal);
+    return { retry: true, nextAttempt };
+  } catch {
+    return {
+      retry: false,
+      engineResult: {
+        success: false,
+        error: new Error('Upload was aborted during retry back-off.'),
+      },
+    };
+  }
+}
+
+private _abortedResult(): EngineResult {
+  return {
+    success: false,
+    error: new Error('Upload was aborted.'),
+  };
+}
+
+private _isAbortError(err: unknown, signal: AbortSignal): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+
+  return (
+    signal.aborted ||
+    message === 'AbortError' ||
+    message === 'Upload aborted.' ||
+    message.toLowerCase().includes('cancel')
+  );
+}
 
   private async _cleanupStaleTempFiles(): Promise<void> {
     const cacheDir = RNBlobUtil.fs.dirs.CacheDir;
@@ -196,22 +264,31 @@ export class UploadEngine {
 
   private async _checkDiskSpace(chunkBytes: number): Promise<Error | null> {
     const requiredBytes = chunkBytes * 2 + 10 * 1024 * 1024;
+
     try {
       const stat = (await RNBlobUtil.fs.df()) as unknown as Record<string, number>;
-      const freeBytes =
-        typeof stat.free === 'number'
-          ? stat.free
-          : typeof stat.internal_free === 'number'
-            ? stat.internal_free
-            : null;
-      if (freeBytes === null) return null;
+
+      let freeBytes: number | null = null;
+
+      if (typeof stat.free === 'number') {
+        freeBytes = stat.free;
+      } else if (typeof stat.internal_free === 'number') {
+        freeBytes = stat.internal_free;
+      }
+
+      if (freeBytes === null) {
+        return null;
+      }
+
       if (freeBytes < requiredBytes) {
         const freeMB = (freeBytes / (1024 * 1024)).toFixed(1);
         const requiredMB = (requiredBytes / (1024 * 1024)).toFixed(1);
+
         return new Error(
           `[FastPix] Not enough storage. Available: ${freeMB} MB, required: ~${requiredMB} MB.`,
         );
       }
+
       return null;
     } catch {
       return null;
@@ -272,7 +349,7 @@ export class UploadEngine {
 
     const tempPath =
       `${RNBlobUtil.fs.dirs.CacheDir}/fastpix_chunk_${chunk.start}_${chunk.end}` +
-      `_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      `_${Date.now()}_${chunk.index}`;
 
     let sliceSucceeded = false;
 
