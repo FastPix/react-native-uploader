@@ -194,9 +194,9 @@ export class FastPixUpload {
       throw new Error(`[FastPix] File is empty or could not be read: ${this._opts.fileUri}`);
     }
 
-    if (this._opts.maxFileSize > 0 && this._fileSizeBytes > this._opts.maxFileSize) {
+    if (this._opts.maxFileSize > 0 && (this._fileSizeBytes / 1024) > this._opts.maxFileSize) {
       const fileMB = (this._fileSizeBytes / (1024 * 1024)).toFixed(2);
-      const limitMB = (this._opts.maxFileSize / (1024 * 1024)).toFixed(2);
+      const limitMB = (this._opts.maxFileSize / (1024)).toFixed(2);
       throw new Error(`[FastPix] File size ${fileMB} MB exceeds the maximum allowed size of ${limitMB} MB.`);
     }
 

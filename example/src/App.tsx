@@ -37,6 +37,7 @@ export default function App() {
   const [chunkRetries, setChunkRetries] = useState(0);
   const [failures, setFailures] = useState(0);
   const [chunkSize, setChunkSize] = useState('5120');
+  const [maxFileSize, setMaxFileSize] = useState('0')
   const [maxRetries, setMaxRetries] = useState('3');
   const [retryDelay, setRetryDelay] = useState('1000');
   const scrollRef = useRef<ScrollView>(null);
@@ -117,6 +118,8 @@ export default function App() {
 
       addLog(`Chunk Size: ${chunkSize}`);
 
+      addLog(`Max file size : ${maxFileSize}`)
+
       const upload = new FastPixUpload({
         endpoint: uploadDetails.url,
         fileUri: asset.uri,
@@ -124,7 +127,7 @@ export default function App() {
         maxRetries: maxRetries.trim() ? Number(maxRetries) : undefined,
         retryDelay: retryDelay.trim() ? Number(retryDelay) : undefined,
         autoHandleNetworkEvents: true,
-        // maxFileSize: 5 * 1024 * 1024, // 100 MB Limit
+        maxFileSize: maxFileSize.trim() ? Number(maxFileSize) : undefined, // 10 * 1024 Kb Limit
         enableLogs: true
       });
 
@@ -254,6 +257,13 @@ export default function App() {
             value={retryDelay}
             onChangeText={setRetryDelay}
             placeholder="Retry Delay"
+            keyboardType="numeric"
+          />
+          <TextInput
+            style={styles.input}
+            value={maxFileSize}
+            onChangeText={setMaxFileSize}
+            placeholder="Max File Size in bytes "
             keyboardType="numeric"
           />
         </View>
