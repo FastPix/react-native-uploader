@@ -20,7 +20,6 @@ jest.mock('../src/utils/validation', () => ({
     maxRetries: 2,
     retryDelay: 0,
     maxFileSize: 0,
-    autoHandleNetworkEvents: opts.autoHandleNetworkEvents ?? true,
     enableLogs: false,
   })),
   resolveEndpoint: jest.fn(async (e: string | (() => Promise<string>)) =>
@@ -387,76 +386,4 @@ describe('FastPixUpload', () => {
     });
   });
 
-  // network handling
-  describe('autoHandleNetworkEvents', () => {
-    it('starts the NetworkMonitor when autoHandleNetworkEvents is true', async () => {
-      setupSuccessfulEngine();
-      const upload = buildUpload();
-      await upload.start();
-      expect(mockNetworkStart).toHaveBeenCalledTimes(1);
-    });
-
-    it('does not start NetworkMonitor when autoHandleNetworkEvents is false', async () => {
-      setupSuccessfulEngine();
-      const upload = buildUpload({ autoHandleNetworkEvents: false } as FastPixUploadOptions);
-      await upload.start();
-      expect(mockNetworkStart).not.toHaveBeenCalled();
-    });
-
-    it('pauses upload and emits "pause" with reason "network" when going offline during upload', async () => {
-      mockStat.mockResolvedValue({ size: FILE_SIZE });
-      let resolveEngine!: (v: { success: boolean }) => void;
-      mockEngineRun.mockReturnValue(
-        new Promise<{ success: boolean }>((res) => { resolveEngine = res; }),
-      );
-
-      const upload = buildUpload();
-      const pauseCb = jest.fn();
-      upload.on('pause', pauseCb);
-      upload.start();
-      await new Promise((r) => setTimeout(r, 0));
-
-      // Trigger network offline via captured callback
-      capturedNetworkCallback?.('offline');
-      expect(upload.state).toBe('PAUSED');
-      expect(pauseCb).toHaveBeenCalledWith({ reason: 'network' });
-      resolveEngine({ success: false, error: new Error('aborted') } as { success: boolean });
-    });
-
-    it('emits "offline" event when going offline', async () => {
-      mockStat.mockResolvedValue({ size: FILE_SIZE });
-      let resolveEngine!: (v: { success: boolean }) => void;
-      mockEngineRun.mockReturnValue(
-        new Promise<{ success: boolean }>((res) => { resolveEngine = res; }),
-      );
-
-      const upload = buildUpload();
-      const offlineCb = jest.fn();
-      upload.on('offline', offlineCb);
-      upload.start();
-      await new Promise((r) => setTimeout(r, 0));
-
-      capturedNetworkCallback?.('offline');
-      expect(offlineCb).toHaveBeenCalledTimes(1);
-      resolveEngine({ success: false });
-    });
-
-    it('emits "online" event when going online', async () => {
-      mockStat.mockResolvedValue({ size: FILE_SIZE });
-      let resolveEngine!: (v: { success: boolean }) => void;
-      mockEngineRun.mockReturnValue(
-        new Promise<{ success: boolean }>((res) => { resolveEngine = res; }),
-      );
-
-      const upload = buildUpload();
-      const onlineCb = jest.fn();
-      upload.on('online', onlineCb);
-      upload.start();
-      await new Promise((r) => setTimeout(r, 0));
-
-      capturedNetworkCallback?.('online');
-      expect(onlineCb).toHaveBeenCalledTimes(1);
-      resolveEngine({ success: false });
-    });
-  });
 });

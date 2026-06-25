@@ -87,7 +87,6 @@ export function validateAndNormalizeOptions(
     );
   }
 
-  const autoHandleNetworkEvents = opts.autoHandleNetworkEvents ?? true;
 
   const enableLogs = opts.enableLogs ?? false;
 
@@ -95,7 +94,7 @@ export function validateAndNormalizeOptions(
   if (typeof maxFileSize !== 'number' || maxFileSize < 0) {
     throw new Error(
       '[FastPix] "maxFileSize" must be a non-negative number (bytes). ' +
-        'Example: 100 * 1024 * 1024 for 100 MB.',
+        'Example: 100 * 1024 for 100 MB.',
     );
   }
 
@@ -107,7 +106,6 @@ export function validateAndNormalizeOptions(
     maxRetries,
     retryDelay,
     maxFileSize,
-    autoHandleNetworkEvents,
     enableLogs
   };
 
@@ -118,7 +116,6 @@ export function validateAndNormalizeOptions(
     chunkSizeMB: (chunkSize / 1024).toFixed(2),
     maxRetries,
     retryDelay,
-    autoHandleNetworkEvents,
     enableLogs
   });
 

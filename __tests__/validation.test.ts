@@ -189,19 +189,10 @@ describe('validateAndNormalizeOptions()', () => {
   });
 
   describe('boolean flags', () => {
-    it('autoHandleNetworkEvents defaults to true', () => {
-      const result = validateAndNormalizeOptions(validOpts());
-      expect(result.autoHandleNetworkEvents).toBe(true);
-    });
 
     it('enableLogs defaults to false', () => {
       const result = validateAndNormalizeOptions(validOpts());
       expect(result.enableLogs).toBe(false);
-    });
-
-    it('respects explicit autoHandleNetworkEvents=false', () => {
-      const result = validateAndNormalizeOptions({ ...validOpts(), autoHandleNetworkEvents: false });
-      expect(result.autoHandleNetworkEvents).toBe(false);
     });
 
     it('respects explicit enableLogs=true', () => {
@@ -220,7 +211,6 @@ describe('validateAndNormalizeOptions()', () => {
         maxRetries: DEFAULT_MAX_RETRIES,
         retryDelay: DEFAULT_RETRY_DELAY_MS,
         maxFileSize: 0,
-        autoHandleNetworkEvents: true,
         enableLogs: false,
       });
     });

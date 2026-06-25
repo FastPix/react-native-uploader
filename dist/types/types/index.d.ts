@@ -55,7 +55,6 @@ export interface FastPixUploadOptions {
     maxRetries?: number;
     retryDelay?: number;
     maxFileSize?: number;
-    autoHandleNetworkEvents?: boolean;
     enableLogs?: boolean;
 }
 export interface ChunkMeta {

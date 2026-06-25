@@ -52,7 +52,6 @@ export class FastPixUpload {
       chunkSize: this._opts.chunkSize,
       maxRetries: this._opts.maxRetries,
       retryDelay: this._opts.retryDelay,
-      autoHandleNetworkEvents: this._opts.autoHandleNetworkEvents,
       fileUri: this._maskPath(this._opts.fileUri),
       endpoint: this._maskUrl(typeof this._opts.endpoint === 'string' ? this._opts.endpoint : 'factory-function'),
     });
@@ -200,10 +199,8 @@ export class FastPixUpload {
       throw new Error(`[FastPix] File size ${fileMB} MB exceeds the maximum allowed size of ${limitMB} MB.`);
     }
 
-    if (this._opts.autoHandleNetworkEvents) {
-      log('[FastPix:FastPixUpload] Setting up network handling', { timestamp: new Date().toISOString() });
-      this._setupNetworkHandling();
-    }
+    this._setupNetworkHandling();
+
 
     this._emitter.emit('started', { fileSize: this._fileSizeBytes, endpoint: this._resolvedEndpoint });
     this._transitionTo('UPLOADING');

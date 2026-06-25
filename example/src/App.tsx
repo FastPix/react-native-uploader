@@ -126,7 +126,6 @@ export default function App() {
         chunkSize: chunkSize.trim() ? Number(chunkSize) : undefined,
         maxRetries: maxRetries.trim() ? Number(maxRetries) : undefined,
         retryDelay: retryDelay.trim() ? Number(retryDelay) : undefined,
-        autoHandleNetworkEvents: true,
         maxFileSize: maxFileSize.trim() ? Number(maxFileSize) : undefined, // 10 * 1024 Kb Limit
         enableLogs: true
       });
