@@ -8,7 +8,13 @@ jest.mock('../utils/logger', () => ({
 
 import { warn } from '../src/utils/logger';
 
-//  NetInfo mock 
+// ── NetInfo mock ──────────────────────────────────────────────────────────────
+// jest.mock() is hoisted above ALL variable declarations, including `const`.
+// The only two safe patterns are:
+//   1. Create jest.fn() INLINE inside the factory, retrieve via require() later.
+//   2. Use `var` (hoisted to undefined, then assigned before factory runs).
+// We use pattern 1 here: everything is inline; getNetInfo() retrieves refs.
+
 type NetInfoStateChangeHandler = (state: NetInfoStateMock) => void;
 
 interface NetInfoStateMock {
@@ -17,23 +23,28 @@ interface NetInfoStateMock {
   type: string;
 }
 
-let registeredHandlers: NetInfoStateChangeHandler[] = [];
-
-const mockNetInfoFetch = jest.fn();
-const mockUnsubscribe = jest.fn();
+// Mutable array to capture handlers — declared as var so it is hoisted to
+// `undefined` and then immediately initialised before any test runs.
+// eslint-disable-next-line no-var
+var mockRegisteredHandlers: NetInfoStateChangeHandler[] = [];
 
 jest.mock('@react-native-community/netinfo', () => ({
-  addEventListener: jest.fn((handler: NetInfoStateChangeHandler) => {
-    registeredHandlers.push(handler);
-    return mockUnsubscribe;
-  }),
-  fetch: mockNetInfoFetch,
+  // All jest.fn() calls are INLINE — no out-of-scope variable access.
+  __esModule: true,
+  default: {
+    addEventListener: jest.fn(),
+    fetch: jest.fn(),
+  },
 }));
 
-import NetInfo from '@react-native-community/netinfo';
-
-function simulateNetworkChange(state: NetInfoStateMock): void {
-  registeredHandlers.forEach((h) => h(state));
+// Retrieve the mocked module after jest has set it up.
+function getNetInfo() {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const mod = require('@react-native-community/netinfo').default as {
+    addEventListener: jest.Mock;
+    fetch: jest.Mock;
+  };
+  return mod;
 }
 
 const onlineState: NetInfoStateMock = {
@@ -54,14 +65,22 @@ const unknownState: NetInfoStateMock = {
   type: 'wifi',
 };
 
+// ─────────────────────────────────────────────
 describe('NetworkMonitor', () => {
   let monitor: NetworkMonitor;
+  let ni: ReturnType<typeof getNetInfo>;
 
   beforeEach(() => {
-    registeredHandlers = [];
-    mockUnsubscribe.mockReset();
-    mockNetInfoFetch.mockReset();
+    mockRegisteredHandlers = [];
     jest.clearAllMocks();
+    ni = getNetInfo();
+
+    // Wire addEventListener to capture handlers and return an unsubscribe fn
+    ni.addEventListener.mockImplementation((handler: NetInfoStateChangeHandler) => {
+      mockRegisteredHandlers.push(handler);
+      return jest.fn(); // unsubscribe
+    });
+
     monitor = new NetworkMonitor();
   });
 
@@ -69,33 +88,42 @@ describe('NetworkMonitor', () => {
     monitor.stop();
   });
 
-  // initial state 
+  function simulateNetworkChange(state: NetInfoStateMock): void {
+    mockRegisteredHandlers.forEach((h) => h(state));
+  }
+
+  // ── initial state ─────────────────────────
   describe('initial state', () => {
     it('currentStatus is "unknown" before start()', () => {
       expect(monitor.currentStatus).toBe('unknown');
     });
   });
 
-  // start() 
+  // ── start() ───────────────────────────────
   describe('start()', () => {
     it('subscribes to NetInfo.addEventListener', () => {
       monitor.start();
-      expect(NetInfo.addEventListener).toHaveBeenCalledTimes(1);
+      expect(ni.addEventListener).toHaveBeenCalledTimes(1);
     });
 
     it('does not subscribe a second time if already started', () => {
       monitor.start();
       monitor.start();
-      expect(NetInfo.addEventListener).toHaveBeenCalledTimes(1);
+      expect(ni.addEventListener).toHaveBeenCalledTimes(1);
     });
   });
 
-  // stop() 
+  // ── stop() ────────────────────────────────
   describe('stop()', () => {
     it('calls the unsubscribe function returned by addEventListener', () => {
+      const mockUnsub = jest.fn();
+      ni.addEventListener.mockImplementationOnce((handler: NetInfoStateChangeHandler) => {
+        mockRegisteredHandlers.push(handler);
+        return mockUnsub;
+      });
       monitor.start();
       monitor.stop();
-      expect(mockUnsubscribe).toHaveBeenCalledTimes(1);
+      expect(mockUnsub).toHaveBeenCalledTimes(1);
     });
 
     it('clears all registered onChange callbacks', () => {
@@ -103,7 +131,7 @@ describe('NetworkMonitor', () => {
       monitor.start();
       monitor.onChange(cb);
       monitor.stop();
-      // Re-subscribe to trigger a change and confirm callback is gone
+      // Re-subscribe and trigger — cb should not fire since stop() cleared callbacks
       monitor.start();
       simulateNetworkChange(onlineState);
       expect(cb).not.toHaveBeenCalled();
@@ -114,7 +142,7 @@ describe('NetworkMonitor', () => {
     });
   });
 
-  // onChange() 
+  // ── onChange() ────────────────────────────
   describe('onChange()', () => {
     it('registers a callback and notifies it on network status change', () => {
       const cb = jest.fn();
@@ -178,20 +206,19 @@ describe('NetworkMonitor', () => {
     });
   });
 
-  // deduplication 
+  // ── deduplication ─────────────────────────
   describe('status deduplication', () => {
     it('does not notify callbacks when status has not changed', () => {
       const cb = jest.fn();
       monitor.start();
       monitor.onChange(cb);
 
-      // First change: unknown → online
       simulateNetworkChange(onlineState);
       expect(cb).toHaveBeenCalledTimes(1);
 
-      // Second change with same derived status: still online
+      // Same derived status — no second call
       simulateNetworkChange({ ...onlineState, type: 'cellular' });
-      expect(cb).toHaveBeenCalledTimes(1); // no second call
+      expect(cb).toHaveBeenCalledTimes(1);
     });
 
     it('updates currentStatus after each unique transition', () => {
@@ -204,7 +231,7 @@ describe('NetworkMonitor', () => {
     });
   });
 
-  // callback error isolation
+  // ── callback error isolation ───────────────
   describe('callback error isolation', () => {
     it('warns and continues notifying remaining callbacks when one throws', () => {
       const badCb = jest.fn().mockImplementation(() => {
@@ -226,22 +253,22 @@ describe('NetworkMonitor', () => {
     });
   });
 
-  // fetchCurrentStatus()
+  // ── fetchCurrentStatus() ──────────────────
   describe('fetchCurrentStatus()', () => {
     it('returns "online" when NetInfo.fetch reports connected and reachable', async () => {
-      mockNetInfoFetch.mockResolvedValue(onlineState);
+      ni.fetch.mockResolvedValue(onlineState);
       const status = await monitor.fetchCurrentStatus();
       expect(status).toBe('online');
     });
 
     it('returns "offline" when NetInfo.fetch reports disconnected', async () => {
-      mockNetInfoFetch.mockResolvedValue(offlineState);
+      ni.fetch.mockResolvedValue(offlineState);
       const status = await monitor.fetchCurrentStatus();
       expect(status).toBe('offline');
     });
 
     it('returns "unknown" when isInternetReachable is null', async () => {
-      mockNetInfoFetch.mockResolvedValue(unknownState);
+      ni.fetch.mockResolvedValue(unknownState);
       const status = await monitor.fetchCurrentStatus();
       expect(status).toBe('unknown');
     });

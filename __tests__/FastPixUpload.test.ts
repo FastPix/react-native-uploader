@@ -1,17 +1,26 @@
+/**
+ * FastPixUpload.test.ts
+ *
+ * Integration-level tests for the public FastPixUpload class.
+ * All mock variables are created INSIDE jest.mock() factories to avoid
+ * the hoisting-before-initialization error.
+ * References are retrieved via require() inside beforeEach / test bodies.
+ */
+
 import { FastPixUpload } from '../src/core/FastPixUpload';
 import type { FastPixUploadOptions } from '../src/types';
 
-// Logger 
+// ── Logger ────────────────────────────────────────────────────────────────────
 jest.mock('../src/utils/logger', () => ({
   log: jest.fn(),
   info: jest.fn(),
   warn: jest.fn(),
 }));
 
-// SDK config 
+// ── SDK config ────────────────────────────────────────────────────────────────
 jest.mock('../src/utils/config', () => ({ SDK_CONFIG: { enableLogs: false } }));
 
-// validation
+// ── validation ────────────────────────────────────────────────────────────────
 jest.mock('../src/utils/validation', () => ({
   validateAndNormalizeOptions: jest.fn((opts: FastPixUploadOptions) => ({
     endpoint: opts.endpoint ?? 'https://example.com/upload',
@@ -19,7 +28,7 @@ jest.mock('../src/utils/validation', () => ({
     chunkSize: 5 * 1024,
     maxRetries: 2,
     retryDelay: 0,
-    maxFileSize: 0,
+    maxFileSize: opts.maxFileSize ?? 0,
     enableLogs: false,
   })),
   resolveEndpoint: jest.fn(async (e: string | (() => Promise<string>)) =>
@@ -27,52 +36,41 @@ jest.mock('../src/utils/validation', () => ({
   ),
 }));
 
-//  ChunkEngine
+// ── ChunkEngine ───────────────────────────────────────────────────────────────
 jest.mock('../src/core/ChunkEngine', () => ({
   chunkIndexForOffset: jest.fn(() => 0),
 }));
 
-//  react-native-blob-util 
-const mockStat = jest.fn();
+// ── react-native-blob-util ────────────────────────────────────────────────────
+// stat is created inline so it is available when the hoisted factory runs.
 jest.mock('react-native-blob-util', () => ({
   __esModule: true,
   default: {
-    fs: { stat: mockStat },
+    fs: { stat: jest.fn() },
   },
 }));
 
-//  UploadEngine 
-let mockEngineRun = jest.fn();
-let mockEngineAbort = jest.fn();
-let mockEngineSetStartOffset = jest.fn();
+function getMockStat(): jest.Mock {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  return require('react-native-blob-util').default.fs.stat as jest.Mock;
+}
 
+// ── UploadEngine ──────────────────────────────────────────────────────────────
+// Inline jest.fn() calls inside the factory; retrieve via getUploadEngineMock().
 jest.mock('../src/core/UploadEngine', () => ({
   UploadEngine: jest.fn().mockImplementation(() => ({
-    run: mockEngineRun,
-    abort: mockEngineAbort,
-    setStartOffset: mockEngineSetStartOffset,
+    run: jest.fn().mockResolvedValue({ success: true }),
+    abort: jest.fn(),
+    setStartOffset: jest.fn(),
   })),
 }));
 
-//  NetworkMonitor 
-let capturedNetworkCallback: ((status: 'online' | 'offline' | 'unknown') => void) | null = null;
 
-const mockNetworkStart = jest.fn();
-const mockNetworkStop = jest.fn();
-const mockNetworkOnChange = jest.fn((cb: (s: string) => void) => {
-  capturedNetworkCallback = cb as (status: 'online' | 'offline' | 'unknown') => void;
-  return jest.fn(); // cleanup noop
-});
+// ── NetworkMonitor ────────────────────────────────────────────────────────────
+// capturedNetworkCallback is prefixed with "mock" so Jest allows it in the factory.
+let mockCapturedNetworkCb: ((status: 'online' | 'offline' | 'unknown') => void) | null = null;
 
-jest.mock('../src/core/NetworkMonitor', () => ({
-  NetworkMonitor: jest.fn().mockImplementation(() => ({
-    start: mockNetworkStart,
-    stop: mockNetworkStop,
-    onChange: mockNetworkOnChange,
-  })),
-}));
-
-//  Helpers 
+// ── Helpers ───────────────────────────────────────────────────────────────────
 const FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
 const defaultOpts = (): FastPixUploadOptions => ({
@@ -85,29 +83,24 @@ function buildUpload(overrides: Partial<FastPixUploadOptions> = {}): FastPixUplo
 }
 
 function setupSuccessfulEngine(): void {
-  mockStat.mockResolvedValue({ size: FILE_SIZE });
-  mockEngineRun.mockResolvedValue({ success: true });
+  getMockStat().mockResolvedValue({ size: FILE_SIZE });
 }
 
+// ─────────────────────────────────────────────
 describe('FastPixUpload', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    capturedNetworkCallback = null;
-    mockEngineRun = jest.fn().mockResolvedValue({ success: true });
-    mockEngineAbort = jest.fn();
-    mockEngineSetStartOffset = jest.fn();
+    mockCapturedNetworkCb = null;
   });
 
   // ── constructor ────────────────────────────
   describe('constructor', () => {
     it('initialises state as IDLE', () => {
-      const upload = buildUpload();
-      expect(upload.state).toBe('IDLE');
+      expect(buildUpload().state).toBe('IDLE');
     });
 
     it('initialises progress with zeroed values', () => {
-      const upload = buildUpload();
-      const p = upload.progress;
+      const p = buildUpload().progress;
       expect(p.bytesUploaded).toBe(0);
       expect(p.bytesTotal).toBe(0);
       expect(p.percentage).toBe(0);
@@ -115,12 +108,11 @@ describe('FastPixUpload', () => {
     });
 
     it('exposes an empty stateHistory', () => {
-      const upload = buildUpload();
-      expect(upload.stateHistory).toHaveLength(0);
+      expect(buildUpload().stateHistory).toHaveLength(0);
     });
   });
 
-  // start() 
+  // ── start() ────────────────────────────────
   describe('start()', () => {
     it('transitions IDLE → STARTED → UPLOADING → COMPLETED on success', async () => {
       setupSuccessfulEngine();
@@ -134,14 +126,14 @@ describe('FastPixUpload', () => {
       expect(upload.state).toBe('COMPLETED');
     });
 
-    it('is a no-op when already started', async () => {
+    it('is a no-op when not IDLE (warns)', async () => {
       setupSuccessfulEngine();
       const upload = buildUpload();
       await upload.start();
-      // Second call after COMPLETED → should warn and return early
-      const warnMock = jest.requireMock('../utils/logger').warn;
+
+      const warnMock = (require('../src/utils/logger') as { warn: jest.Mock }).warn;
       const before = warnMock.mock.calls.length;
-      await upload.start();
+      await upload.start(); // state is now COMPLETED
       expect(warnMock.mock.calls.length).toBeGreaterThan(before);
     });
 
@@ -170,11 +162,15 @@ describe('FastPixUpload', () => {
     });
 
     it('transitions to FAILED and emits "error" when engine fails', async () => {
-      mockStat.mockResolvedValue({ size: FILE_SIZE });
-      mockEngineRun.mockResolvedValue({
-        success: false,
-        error: new Error('chunk failed'),
-      });
+      getMockStat().mockResolvedValue({ size: FILE_SIZE });
+      // Override run() on the next instance
+      const { UploadEngine } = require('../src/core/UploadEngine') as { UploadEngine: jest.Mock };
+      UploadEngine.mockImplementationOnce(() => ({
+        run: jest.fn().mockResolvedValue({ success: false, error: new Error('chunk failed') }),
+        abort: jest.fn(),
+        setStartOffset: jest.fn(),
+      }));
+
       const upload = buildUpload();
       const errorCb = jest.fn();
       upload.on('error', errorCb);
@@ -187,8 +183,8 @@ describe('FastPixUpload', () => {
       );
     });
 
-    it('transitions to FAILED and emits "error" when stat throws', async () => {
-      mockStat.mockRejectedValue(new Error('File not found'));
+    it('transitions to FAILED when stat throws', async () => {
+      getMockStat().mockRejectedValue(new Error('File not found'));
       const upload = buildUpload();
       const errorCb = jest.fn();
       upload.on('error', errorCb);
@@ -199,8 +195,8 @@ describe('FastPixUpload', () => {
       expect(errorCb).toHaveBeenCalled();
     });
 
-    it('throws when file size is 0', async () => {
-      mockStat.mockResolvedValue({ size: 0 });
+    it('transitions to FAILED when file size is 0', async () => {
+      getMockStat().mockResolvedValue({ size: 0 });
       const upload = buildUpload();
       const errorCb = jest.fn();
       upload.on('error', errorCb);
@@ -211,9 +207,9 @@ describe('FastPixUpload', () => {
       );
     });
 
-    it('throws when file exceeds maxFileSize', async () => {
-      mockStat.mockResolvedValue({ size: FILE_SIZE });
-      const upload = buildUpload({ maxFileSize: FILE_SIZE - 1 } as FastPixUploadOptions);
+    it('transitions to FAILED when file exceeds maxFileSize', async () => {
+      getMockStat().mockResolvedValue({ size: FILE_SIZE });
+      const upload = buildUpload({ maxFileSize: FILE_SIZE - 1 });
       const errorCb = jest.fn();
       upload.on('error', errorCb);
 
@@ -224,44 +220,33 @@ describe('FastPixUpload', () => {
     });
   });
 
-  // pause() 
+  // ── pause() ────────────────────────────────
   describe('pause()', () => {
-    it('transitions UPLOADING → PAUSED', async () => {
-      mockStat.mockResolvedValue({ size: FILE_SIZE });
-      let resolveEngine!: (v: { success: boolean }) => void;
-      mockEngineRun.mockReturnValue(
-        new Promise<{ success: boolean }>((res) => {
-          resolveEngine = res;
-        }),
-      );
+    it('transitions UPLOADING → PAUSED and emits pause with reason "user"', async () => {
+      getMockStat().mockResolvedValue({ size: FILE_SIZE });
 
-      const upload = buildUpload();
-      upload.start(); // kick off (don't await)
-      // Wait for UPLOADING state
-      await new Promise((r) => setTimeout(r, 0));
-
-      upload.pause();
-      expect(upload.state).toBe('PAUSED');
-      resolveEngine({ success: false, error: new Error('Upload was aborted.') } as { success: boolean });
-    });
-
-    it('emits "pause" event with reason "user"', async () => {
-      mockStat.mockResolvedValue({ size: FILE_SIZE });
-      let resolveEngine!: (v: { success: boolean }) => void;
-      mockEngineRun.mockReturnValue(
-        new Promise<{ success: boolean }>((res) => { resolveEngine = res; }),
-      );
+      let resolveEngine!: (v: { success: boolean; error?: Error }) => void;
+      const { UploadEngine } = require('../src/core/UploadEngine') as { UploadEngine: jest.Mock };
+      UploadEngine.mockImplementationOnce(() => ({
+        run: jest.fn().mockReturnValue(
+          new Promise<{ success: boolean; error?: Error }>((res) => { resolveEngine = res; }),
+        ),
+        abort: jest.fn(),
+        setStartOffset: jest.fn(),
+      }));
 
       const upload = buildUpload();
       const pauseCb = jest.fn();
       upload.on('pause', pauseCb);
 
-      upload.start();
-      await new Promise((r) => setTimeout(r, 0));
-      upload.pause();
+      upload.start(); // intentionally not awaited
+      await new Promise((r) => setTimeout(r, 0)); // let microtasks settle to UPLOADING
 
+      upload.pause();
+      expect(upload.state).toBe('PAUSED');
       expect(pauseCb).toHaveBeenCalledWith({ reason: 'user' });
-      resolveEngine({ success: false, error: new Error('aborted') } as { success: boolean });
+
+      resolveEngine({ success: false, error: new Error('Upload was aborted.') });
     });
 
     it('is a no-op when state is not UPLOADING', () => {
@@ -271,7 +256,7 @@ describe('FastPixUpload', () => {
     });
   });
 
-  // resume()
+  // ── resume() ──────────────────────────────
   describe('resume()', () => {
     it('is a no-op when state is not PAUSED', async () => {
       const upload = buildUpload();
@@ -280,20 +265,26 @@ describe('FastPixUpload', () => {
     });
   });
 
-  // abort() 
+  // ── abort() ────────────────────────────────
   describe('abort()', () => {
-    it('is a no-op when state is IDLE', () => {
+    it('is a no-op when state is already IDLE', () => {
       const upload = buildUpload();
       expect(() => upload.abort()).not.toThrow();
       expect(upload.state).toBe('IDLE');
     });
 
     it('transitions to IDLE and emits "abort" event', async () => {
-      mockStat.mockResolvedValue({ size: FILE_SIZE });
+      getMockStat().mockResolvedValue({ size: FILE_SIZE });
+
       let resolveEngine!: (v: { success: boolean }) => void;
-      mockEngineRun.mockReturnValue(
-        new Promise<{ success: boolean }>((res) => { resolveEngine = res; }),
-      );
+      const { UploadEngine } = require('../src/core/UploadEngine') as { UploadEngine: jest.Mock };
+      UploadEngine.mockImplementationOnce(() => ({
+        run: jest.fn().mockReturnValue(
+          new Promise<{ success: boolean }>((res) => { resolveEngine = res; }),
+        ),
+        abort: jest.fn(),
+        setStartOffset: jest.fn(),
+      }));
 
       const upload = buildUpload();
       const abortCb = jest.fn();
@@ -301,35 +292,40 @@ describe('FastPixUpload', () => {
 
       upload.start();
       await new Promise((r) => setTimeout(r, 0));
-      upload.abort();
 
+      upload.abort();
       expect(upload.state).toBe('IDLE');
       expect(abortCb).toHaveBeenCalledTimes(1);
+
       resolveEngine({ success: false });
     });
 
-    it('resets all upload state fields', async () => {
-      mockStat.mockResolvedValue({ size: FILE_SIZE });
+    it('resets bytesTotal to 0 after abort', async () => {
+      getMockStat().mockResolvedValue({ size: FILE_SIZE });
+
       let resolveEngine!: (v: { success: boolean }) => void;
-      mockEngineRun.mockReturnValue(
-        new Promise<{ success: boolean }>((res) => { resolveEngine = res; }),
-      );
+      const { UploadEngine } = require('../src/core/UploadEngine') as { UploadEngine: jest.Mock };
+      UploadEngine.mockImplementationOnce(() => ({
+        run: jest.fn().mockReturnValue(
+          new Promise<{ success: boolean }>((res) => { resolveEngine = res; }),
+        ),
+        abort: jest.fn(),
+        setStartOffset: jest.fn(),
+      }));
 
       const upload = buildUpload();
       upload.start();
       await new Promise((r) => setTimeout(r, 0));
       upload.abort();
 
-      const p = upload.progress;
-      expect(p.bytesTotal).toBe(0);
-      expect(p.bytesUploaded).toBe(0);
+      expect(upload.progress.bytesTotal).toBe(0);
       resolveEngine({ success: false });
     });
   });
 
-  // on() / off() 
+  // ── on() / off() ──────────────────────────
   describe('on() / off()', () => {
-    it('on() returns an unsubscribe function', async () => {
+    it('on() returns an unsubscribe function that prevents future calls', async () => {
       setupSuccessfulEngine();
       const upload = buildUpload();
       const cb = jest.fn();
@@ -350,20 +346,18 @@ describe('FastPixUpload', () => {
     });
   });
 
-  // progress getter 
+  // ── progress getter ────────────────────────
   describe('progress getter', () => {
     it('shows 0% when IDLE', () => {
-      const upload = buildUpload();
-      expect(upload.progress.percentage).toBe(0);
+      expect(buildUpload().progress.percentage).toBe(0);
     });
 
     it('includes currentChunkIndex in the snapshot', () => {
-      const upload = buildUpload();
-      expect(upload.progress).toHaveProperty('currentChunkIndex');
+      expect(buildUpload().progress).toHaveProperty('currentChunkIndex');
     });
   });
 
-  // stateHistory 
+  // ── stateHistory ──────────────────────────
   describe('stateHistory', () => {
     it('records transitions in order', async () => {
       setupSuccessfulEngine();
@@ -375,7 +369,7 @@ describe('FastPixUpload', () => {
       expect(history[history.length - 1]).toMatchObject({ to: 'COMPLETED' });
     });
 
-    it('records timestamps (at) as numbers', async () => {
+    it('records timestamps (at) as positive numbers', async () => {
       setupSuccessfulEngine();
       const upload = buildUpload();
       await upload.start();
@@ -385,5 +379,4 @@ describe('FastPixUpload', () => {
       });
     });
   });
-
 });

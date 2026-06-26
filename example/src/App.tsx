@@ -242,28 +242,24 @@ export default function App() {
             value={chunkSize}
             onChangeText={setChunkSize}
             placeholder="Chunk Size"
-            keyboardType="numeric"
           />
           <TextInput
             style={styles.input}
             value={maxRetries}
             onChangeText={setMaxRetries}
             placeholder="Retries"
-            keyboardType="numeric"
           />
           <TextInput
             style={styles.input}
             value={retryDelay}
             onChangeText={setRetryDelay}
             placeholder="Retry Delay"
-            keyboardType="numeric"
           />
           <TextInput
             style={styles.input}
             value={maxFileSize}
             onChangeText={setMaxFileSize}
             placeholder="Max File Size in bytes "
-            keyboardType="numeric"
           />
         </View>
 
