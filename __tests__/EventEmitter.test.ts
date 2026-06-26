@@ -8,6 +8,9 @@ jest.mock('../src/utils/logger', () => ({
 
 import { warn } from '../src/utils/logger';
 
+// ─────────────────────────────────────────────
+// TypedEventEmitter
+// ─────────────────────────────────────────────
 describe('TypedEventEmitter', () => {
   let emitter: TypedEventEmitter;
 
@@ -16,6 +19,7 @@ describe('TypedEventEmitter', () => {
     jest.clearAllMocks();
   });
 
+  // ── on() ──────────────────────────────────
   describe('on()', () => {
     it('registers a listener and calls it when the event is emitted', () => {
       const cb = jest.fn();
@@ -91,7 +95,7 @@ describe('TypedEventEmitter', () => {
     });
   });
 
-  // emit() 
+  // ── emit() ──────────────────────────────────
   describe('emit()', () => {
     it('does nothing when no listeners are registered for the event', () => {
       expect(() => emitter.emit('success', undefined)).not.toThrow();
@@ -144,7 +148,7 @@ describe('TypedEventEmitter', () => {
     });
   });
 
-  // removeAllListeners() 
+  // ── removeAllListeners() ──────────────────
   describe('removeAllListeners()', () => {
     it('removes all registered listeners across all events', () => {
       const progressCb = jest.fn();
@@ -180,7 +184,7 @@ describe('TypedEventEmitter', () => {
     });
   });
 
-  // unsubscribe via returned function 
+  // ── unsubscribe via returned function ────────
   describe('unsubscribe returned by on()', () => {
     it('is idempotent — calling it multiple times does not throw', () => {
       const cb = jest.fn();

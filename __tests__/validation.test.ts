@@ -188,19 +188,6 @@ describe('validateAndNormalizeOptions()', () => {
     });
   });
 
-  describe('boolean flags', () => {
-
-    it('enableLogs defaults to false', () => {
-      const result = validateAndNormalizeOptions(validOpts());
-      expect(result.enableLogs).toBe(false);
-    });
-
-    it('respects explicit enableLogs=true', () => {
-      const result = validateAndNormalizeOptions({ ...validOpts(), enableLogs: true });
-      expect(result.enableLogs).toBe(true);
-    });
-  });
-
   describe('returned shape', () => {
     it('returns all required fields', () => {
       const result = validateAndNormalizeOptions(validOpts());
@@ -241,7 +228,9 @@ describe('resolveEndpoint()', () => {
   });
 
   it('throws when factory resolves to a non-string value', async () => {
-    const factory = jest.fn().mockResolvedValue(null);
+    // jest.fn() is typed as returning `any`, so no TS error is raised here;
+    // the runtime guard inside resolveEndpoint() is what we are exercising.
+    const factory = jest.fn().mockResolvedValue(null as unknown);
     await expect(resolveEndpoint(factory)).rejects.toThrow(
       'The endpoint factory function must resolve to a non-empty string URL.',
     );

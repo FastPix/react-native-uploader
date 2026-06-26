@@ -17,6 +17,9 @@ const MIN_CHUNK_KB = 5120;
 const ONE_MB = 1024 * 1024;
 const CHUNK_5MB = MIN_CHUNK_KB; // 5120 KB
 
+// ─────────────────────────────────────────────
+// buildChunkListFromOffset
+// ─────────────────────────────────────────────
 describe('buildChunkListFromOffset()', () => {
   describe('input validation', () => {
     it('throws when fileSizeBytes is 0', () => {
@@ -84,7 +87,7 @@ describe('buildChunkListFromOffset()', () => {
       const chunks = buildChunkListFromOffset(fileSize, CHUNK_5MB);
 
       expect(chunks).toHaveLength(3);
-      const last = chunks[2]!;
+      const last = chunks[2];
       expect(last.start).toBe(chunkBytes * 2);
       expect(last.end).toBe(fileSize);
     });
@@ -95,10 +98,10 @@ describe('buildChunkListFromOffset()', () => {
       const chunks = buildChunkListFromOffset(fileSize, CHUNK_5MB);
 
       for (let i = 1; i < chunks.length; i++) {
-        expect(chunks[i]!.start).toBe(chunks[i - 1]!.end);
+        expect(chunks[i].start).toBe(chunks[i - 1].end);
       }
-      expect(chunks[0]!.start).toBe(0);
-      expect(chunks[chunks.length - 1]!.end).toBe(fileSize);
+      expect(chunks[0].start).toBe(0);
+      expect(chunks[chunks.length - 1].end).toBe(fileSize);
     });
 
     it('every chunk carries the correct totalSize', () => {
@@ -123,8 +126,8 @@ describe('buildChunkListFromOffset()', () => {
       const chunks = buildChunkListFromOffset(fileSize, CHUNK_5MB, resumeOffset);
 
       expect(chunks).toHaveLength(2);
-      expect(chunks[0]!.index).toBe(1);
-      expect(chunks[0]!.start).toBe(chunkBytes);
+      expect(chunks[0].index).toBe(1);
+      expect(chunks[0].start).toBe(chunkBytes);
     });
 
     it('starts from the middle of a chunk when resumeOffset is mid-chunk', () => {
@@ -135,7 +138,7 @@ describe('buildChunkListFromOffset()', () => {
       const chunks = buildChunkListFromOffset(fileSize, CHUNK_5MB, resumeOffset);
 
       // First returned chunk starts at the resumeOffset, not the chunk boundary
-      expect(chunks[0]!.start).toBe(resumeOffset);
+      expect(chunks[0].start).toBe(resumeOffset);
     });
 
     it('returns correct number of remaining chunks after partial upload', () => {
@@ -156,6 +159,9 @@ describe('buildChunkListFromOffset()', () => {
   });
 });
 
+// ─────────────────────────────────────────────
+// chunkIndexForOffset
+// ─────────────────────────────────────────────
 describe('chunkIndexForOffset()', () => {
   const chunkSizeKB = CHUNK_5MB; // 5 MB chunks
   const chunkBytes = chunkSizeKB * 1024;
@@ -182,6 +188,9 @@ describe('chunkIndexForOffset()', () => {
   });
 });
 
+// ─────────────────────────────────────────────
+// buildContentRangeHeader
+// ─────────────────────────────────────────────
 describe('buildContentRangeHeader()', () => {
   const makeChunk = (start: number, end: number, totalSize: number, index = 0): ChunkMeta => ({
     index,

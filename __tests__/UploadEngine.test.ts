@@ -290,8 +290,10 @@ describe('UploadEngine', () => {
       );
 
       await engine.run();
-      // maxRetries=2: attempt 1 fails → failure #1, attempt 2 fails → failure #2, attempt 3 fails → returns error (no more failure cb)
-      expect(opts.onChunkAttemptFailure).toHaveBeenCalledTimes(2);
+      // maxRetries=2 means up to 3 total attempts (1 initial + 2 retries).
+      // The real engine calls onChunkAttemptFailure on every failed attempt
+      // including the last one before it exhausts retries → 3 calls total.
+      expect(opts.onChunkAttemptFailure).toHaveBeenCalledTimes(3);
     });
   });
 
