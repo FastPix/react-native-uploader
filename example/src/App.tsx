@@ -237,24 +237,29 @@ export default function App() {
         {/* Upload Config */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Upload Configuration</Text>
+          <Text> Enter Chunk Size </Text>
           <TextInput
             style={styles.input}
             value={chunkSize}
             onChangeText={setChunkSize}
             placeholder="Chunk Size"
           />
+          <Text> Enter Max Retries </Text>
           <TextInput
             style={styles.input}
             value={maxRetries}
             onChangeText={setMaxRetries}
             placeholder="Retries"
           />
+          <Text> Enter Retry Delay  </Text>
           <TextInput
             style={styles.input}
             value={retryDelay}
             onChangeText={setRetryDelay}
             placeholder="Retry Delay"
           />
+
+          <Text> Enter Max File Size Limit </Text>
           <TextInput
             style={styles.input}
             value={maxFileSize}
