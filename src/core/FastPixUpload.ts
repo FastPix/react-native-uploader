@@ -133,17 +133,33 @@ export class FastPixUpload {
 
   abort(): void {
     if (this._state === 'IDLE') return;
+
     log('[FastPix:FastPixUpload] abort() called', {
       timestamp: new Date().toISOString(),
       currentState: this._state,
       uploadedOffset: this._uploadedOffset,
     });
+
     this._engine?.abort();
     this._networkMonitor.stop();
-    this._emitter.emit('abort', undefined);
-    this._transitionTo('IDLE');
-    this._emitter.removeAllListeners();
+
     this._uploadedOffset = 0;
+    this._liveBytesUploaded = 0;
+    this._livePercentage = 0;
+
+    this._transitionTo('IDLE');
+
+    this._emitter.emit('progress', this.progress);
+     log('[FastPix:FastPixUpload] progress 0 triggered', {
+      uploadOffset: this._uploadedOffset,
+      liveBytesUploaded : this._liveBytesUploaded,
+      livePercentage : this._livePercentage
+    });
+
+    this._emitter.emit('abort', undefined);
+
+    this._emitter.removeAllListeners();
+
     this._fileSizeBytes = 0;
     this._resolvedEndpoint = '';
     this._resolvedFileUri = '';
@@ -153,6 +169,16 @@ export class FastPixUpload {
   get state(): UploadState { return this._state; }
 
   get progress(): UploadProgressSnapshot {
+    if(this._state === 'IDLE')
+    {
+      return {
+        state :'IDLE',
+        bytesTotal : this._fileSizeBytes,
+        bytesUploaded : 0,
+        percentage :0,
+        currentChunkIndex :0
+      }
+    }
     const isLiveState =
       this._state === 'UPLOADING' || this._state === 'RESUMED';
 
