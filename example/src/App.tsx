@@ -304,9 +304,25 @@ export default function App() {
 
         {/* Buttons */}
         <View style={styles.buttonRow}>
-          <TouchableOpacity style={styles.primaryButton} onPress={pickAndUpload}>
-            <Text style={styles.buttonText}>Upload</Text>
-          </TouchableOpacity>
+          {(uploadState === 'Idle' ||
+            uploadState === 'Completed' ||
+            uploadState === 'Failed' ||uploadState === 'Aborted') && (
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={pickAndUpload}>
+              <Text style={styles.buttonText}>Upload</Text>
+            </TouchableOpacity>
+          )}
+
+          {!(uploadState === 'Idle' || 
+            uploadState === 'Completed' || 
+            uploadState === 'Failed' || 
+            uploadState === 'Aborted') && (
+            <TouchableOpacity style={[styles.secondaryButton]}>
+              <Text style={styles.buttonText}>Upload</Text>
+            </TouchableOpacity>
+          )} 
+ 
           <TouchableOpacity
             style={styles.secondaryButton}
             onPress={() => uploadRef?.pause()}>
