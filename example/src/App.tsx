@@ -313,7 +313,7 @@ export default function App() {
         <View style={styles.buttonRow}>
           {(uploadState === 'Idle' ||
             uploadState === 'Completed' ||
-            uploadState === 'Failed' ||uploadState === 'Aborted') && (
+            uploadState === 'Failed' || uploadState === 'Aborted') && (
             <TouchableOpacity
               style={styles.primaryButton}
               onPress={pickAndUpload}>
@@ -363,6 +363,7 @@ export default function App() {
             style={styles.dangerButton}
             onPress={() => {
               uploadRef?.abort();
+              cleanUpSession();
               addLog('Upload aborted.');
             }}>
             <Text style={styles.buttonText}>Abort</Text>

@@ -71,6 +71,11 @@ export function validateAndNormalizeOptions(
     );
   }
 
+  if(chunkSize % 256 !== 0)
+  {
+    throw new Error(`chunk size should be divisible by 256`)
+  }
+
   // maxRetries
   const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
   if (!Number.isInteger(maxRetries) || maxRetries < 0) {
