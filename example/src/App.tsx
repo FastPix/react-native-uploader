@@ -84,9 +84,15 @@ export default function App() {
     setSpeed('0 KB/s');
   };
 
+  const cleanUpSession = () => {
+    resetStats();
+    setUploadState('Idle');
+    setFileInfo(null);
+  }
+
   const pickAndUpload = async () => {
     try {
-      resetStats();
+      cleanUpSession();
 
       const result = await launchImageLibrary({mediaType: 'video'});
       const asset = result.assets?.[0];
@@ -198,6 +204,7 @@ export default function App() {
 
       upload.on('abort', () => {
         setUploadState('Aborted');
+        cleanUpSession();
         addLog('Upload aborted.', 'warning');
       });
 
@@ -323,16 +330,35 @@ export default function App() {
             </TouchableOpacity>
           )} 
  
-          <TouchableOpacity
-            style={styles.secondaryButton}
+        {(uploadState === 'Uploading' || uploadState === 'UPLOADING') &&(
+            <TouchableOpacity
+            style={styles.primaryButton}
             onPress={() => uploadRef?.pause()}>
             <Text style={styles.buttonText}>Pause</Text>
           </TouchableOpacity>
+        )}
+        {!(uploadState === 'Uploading' || uploadState === 'UPLOADING') &&(
+            <TouchableOpacity
+            style={styles.secondaryButton}>
+            <Text style={styles.buttonText}>Pause</Text>
+          </TouchableOpacity>
+        )}
+
+        {(uploadState === 'Paused') &&(
           <TouchableOpacity
-            style={styles.secondaryButton}
+            style={styles.primaryButton}
             onPress={() => uploadRef?.resume()}>
             <Text style={styles.buttonText}>Resume</Text>
           </TouchableOpacity>
+        )}
+
+        {(uploadState !== 'Paused') &&(
+          <TouchableOpacity
+            style={styles.secondaryButton}>
+            <Text style={styles.buttonText}>Resume</Text>
+          </TouchableOpacity>
+        )}
+          
           <TouchableOpacity
             style={styles.dangerButton}
             onPress={() => {
