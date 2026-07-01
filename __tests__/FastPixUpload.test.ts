@@ -73,6 +73,10 @@ jest.mock('../src/core/UploadEngine', () => ({
 // Capture the onChange callback so tests can trigger network events.
 // eslint-disable-next-line no-var
 var capturedNetworkCallback: ((status: string) => void) | null = null;
+// eslint-disable-next-line no-var
+var capturedTransportCallback:
+  | ((type: string, previousType: string | null) => void)
+  | null = null;
 
 jest.mock('../src/core/NetworkMonitor', () => ({
   NetworkMonitor: jest.fn().mockImplementation(() => ({
@@ -80,6 +84,10 @@ jest.mock('../src/core/NetworkMonitor', () => ({
     stop: jest.fn(),
     onChange: jest.fn((cb: (s: string) => void) => {
       capturedNetworkCallback = cb;
+      return jest.fn();
+    }),
+    onTransportChange: jest.fn((cb: (t: string, p: string | null) => void) => {
+      capturedTransportCallback = cb;
       return jest.fn();
     }),
   })),
@@ -106,6 +114,7 @@ describe('FastPixUpload', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     capturedNetworkCallback = null;
+    capturedTransportCallback = null;
 
     // Re-wire UploadEngine — clearAllMocks() wipes all mockImplementations.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -467,6 +476,32 @@ describe('FastPixUpload', () => {
       await new Promise((r) => setTimeout(r, 0));
       capturedNetworkCallback?.('online');
       expect(onlineCb).toHaveBeenCalledTimes(1);
+      resolveEngine({ success: false });
+    });
+
+    it('restarts the upload (aborts engine) on a transport switch while uploading', async () => {
+      getMockStat().mockResolvedValue({ size: FILE_SIZE });
+      const abortSpy = jest.fn();
+      let resolveEngine!: (v: { success: boolean }) => void;
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { UploadEngine } = require('../src/core/UploadEngine') as { UploadEngine: jest.Mock };
+      UploadEngine.mockImplementation(() => ({
+        run: jest.fn().mockReturnValue(new Promise<{ success: boolean }>((res) => { resolveEngine = res; })),
+        abort: abortSpy,
+        setStartOffset: jest.fn(),
+      }));
+
+      const upload = buildUpload();
+      const pauseCb = jest.fn();
+      upload.on('pause', pauseCb);
+      upload.start();
+      await new Promise((r) => setTimeout(r, 0));
+
+      // wifi -> cellular while the device stays online.
+      capturedTransportCallback?.('cellular', 'wifi');
+
+      expect(abortSpy).toHaveBeenCalled();
+      expect(pauseCb).toHaveBeenCalledWith({ reason: 'network' });
       resolveEngine({ success: false });
     });
   });

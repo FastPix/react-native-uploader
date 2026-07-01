@@ -6,10 +6,22 @@ export type NetworkStatus = 'online' | 'offline' | 'unknown';
 
 export type NetworkChangeCallback = (status: NetworkStatus) => void;
 
+/**
+ * Fired when the physical transport changes (e.g. wifi <-> cellular) while the
+ * device stays "online". The in-flight socket dies on such a switch, but NetInfo
+ * keeps reporting "online", so status-only listeners never see it.
+ */
+export type TransportChangeCallback = (
+  type: string,
+  previousType: string | null,
+) => void;
+
 export class NetworkMonitor {
   private _subscription: NetInfoSubscription | null = null;
   private _currentStatus: NetworkStatus = 'unknown';
+  private _currentType: string | null = null;
   private readonly _callbacks = new Set<NetworkChangeCallback>();
+  private readonly _transportCallbacks = new Set<TransportChangeCallback>();
 
   /** Start listening to network state changes. */
   start(): void {
@@ -40,6 +52,8 @@ export class NetworkMonitor {
     this._subscription?.();
     this._subscription = null;
     this._callbacks.clear();
+    this._transportCallbacks.clear();
+    this._currentType = null;
   }
 
   /** Register a callback to be notified of network status changes. */
@@ -58,9 +72,25 @@ export class NetworkMonitor {
     };
   }
 
+  /**
+   * Register a callback for physical transport changes (e.g. wifi <-> cellular)
+   * that happen while the device stays online. Returns an unsubscribe function.
+   */
+  onTransportChange(callback: TransportChangeCallback): () => void {
+    this._transportCallbacks.add(callback);
+    return () => {
+      this._transportCallbacks.delete(callback);
+    };
+  }
+
   /** Returns the last known network status. */
   get currentStatus(): NetworkStatus {
     return this._currentStatus;
+  }
+
+  /** Returns the last known transport type (e.g. "wifi", "cellular"). */
+  get currentType(): string | null {
+    return this._currentType;
   }
 
 
@@ -73,6 +103,32 @@ export class NetworkMonitor {
 
   private _handleStateChange(state: NetInfoState): void {
     const newStatus = this._deriveStatus(state);
+    const newType = state.type;
+
+    // Detect a transport switch (e.g. wifi <-> cellular) even when the
+    // online/offline status is unchanged. On such a switch the in-flight socket
+    // dies but NetInfo keeps reporting "online", so status-only listeners miss
+    // it. The very first observation (previousType === null) is not a "change".
+    const previousType = this._currentType;
+    this._currentType = newType;
+
+    if (previousType !== null && newType !== previousType) {
+      log('[FastPix:NetworkMonitor] Transport type changed', {
+        timestamp: new Date().toISOString(),
+        previousType,
+        newType,
+        status: newStatus,
+        transportCallbackCount: this._transportCallbacks.size,
+      });
+      this._transportCallbacks.forEach((cb) => {
+        try {
+          cb(newType, previousType);
+        } catch (err) {
+          warn('[FastPix:NetworkMonitor] Transport callback error:', err);
+        }
+      });
+    }
+
     if (newStatus === this._currentStatus) {
       log('[FastPix:NetworkMonitor] Network state changed but status unchanged', {
         timestamp: new Date().toISOString(),

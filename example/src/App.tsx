@@ -82,6 +82,10 @@ export default function App() {
     setChunkRetries(0);
     setFailures(0);
     setSpeed('0 KB/s');
+    // Reset the speed baseline so a new upload doesn't diff its bytes against
+    // the previous upload's byte count (which produced a negative first reading
+    // after abort → new upload).
+    speedRef.current = { bytes: 0, time: Date.now() };
   };
 
   const cleanUpSession = () => {
@@ -154,7 +158,9 @@ export default function App() {
 
         if (elapsed >= 1) {
           const uploadedDiff = bytesUploaded - speedRef.current.bytes;
-          const kbps = uploadedDiff / elapsed / 1024;
+          // Clamp to 0: if bytesUploaded ever dips below the previous baseline
+          // (stale tick from a prior session), never show a negative speed.
+          const kbps = Math.max(0, uploadedDiff / elapsed / 1024);
           setSpeed(`${kbps.toFixed(2)} KB/s`);
 
           speedRef.current = {bytes: bytesUploaded, time: now};
@@ -187,9 +193,13 @@ export default function App() {
       });
 
       upload.on('error', ({message}) => {
-        setFailures(prev => prev + 1);
-        setUploadState('Failed');
         addLog(message, 'error');
+        // Clear the stale upload details (progress bar, chunk stats, file info)
+        // once the upload has failed, then surface the Failed state — which also
+        // re-enables the Upload button.
+        resetStats();
+        setFileInfo(null);
+        setUploadState('Failed');
       });
 
       upload.on('pause', ({reason}) => {
@@ -216,6 +226,9 @@ export default function App() {
 
     } catch (error: any) {
       addLog(error?.message ?? 'Unknown error occurred', 'error');
+      // Validation/setup failed (e.g. chunk size not divisible by 256).
+      // Clear the session so the Upload button becomes active again.
+      cleanUpSession();
     }
   };
 

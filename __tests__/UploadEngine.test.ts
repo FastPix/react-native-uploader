@@ -290,10 +290,10 @@ describe('UploadEngine', () => {
       );
 
       await engine.run();
-      // maxRetries=2 means up to 3 total attempts (1 initial + 2 retries).
-      // The real engine calls onChunkAttemptFailure on every failed attempt
-      // including the last one before it exhausts retries → 3 calls total.
-      expect(opts.onChunkAttemptFailure).toHaveBeenCalledTimes(3);
+      // maxRetries is the TOTAL number of attempts (not extra retries), so
+      // maxRetries=2 means exactly 2 attempts. onChunkAttemptFailure fires on
+      // every failed attempt, including the last → 2 calls total.
+      expect(opts.onChunkAttemptFailure).toHaveBeenCalledTimes(2);
     });
   });
 

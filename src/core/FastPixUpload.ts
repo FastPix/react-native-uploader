@@ -41,6 +41,7 @@ export class FastPixUpload {
 
   private _liveBytesUploaded = 0;
   private _livePercentage = 0;
+  private _reconnecting = false;
 
   private readonly _stateHistory: Array<{ from: UploadState; to: UploadState; at: number }> = [];
 
@@ -348,6 +349,41 @@ export class FastPixUpload {
         }
       }
     });
+
+    // WiFi <-> cellular (and similar) switches keep the device "online", so no
+    // offline/online cycle fires — but the in-flight socket is already dead and
+    // the upload stalls forever. Detect the transport switch and restart the
+    // current chunk from the server-confirmed offset.
+    this._networkMonitor.onTransportChange((type, previousType) => {
+      log('[FastPix:FastPixUpload] Transport changed mid-upload', {
+        timestamp: new Date().toISOString(),
+        previousType,
+        newType: type,
+        currentState: this._state,
+      });
+      if (this._state === 'UPLOADING') {
+        this._restartAfterTransportChange();
+      }
+    });
+  }
+
+  private _restartAfterTransportChange(): void {
+    if (this._reconnecting) return;
+    this._reconnecting = true;
+
+    // Kill the dead request, drop back to PAUSED so the aborted engine run is
+    // treated as intentional, then resume — which re-probes the server offset
+    // before continuing, so no bytes are lost or re-sent.
+    this._pausedByUser = false;
+    this._engine?.abort();
+    this._transitionTo('PAUSED');
+    this._emitter.emit('pause', { reason: 'network' });
+
+    this.resume()
+      .catch((err: unknown) => this._handleFatalError(err))
+      .finally(() => {
+        this._reconnecting = false;
+      });
   }
 
   private async _syncResumeOffset(): Promise<void> {

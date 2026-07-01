@@ -51,6 +51,12 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+// If an in-flight chunk makes no upload progress for this long, the underlying
+// socket is treated as dead (e.g. a network handoff that keeps the device
+// "online") and the request is cancelled so the retry logic can re-attempt the
+// chunk instead of hanging forever.
+const STALL_TIMEOUT_MS = 30_000;
+
 export class UploadEngine {
   private readonly _opts: UploadEngineOptions;
   private _abortController: AbortController = new AbortController();
@@ -195,7 +201,7 @@ private async _handleChunkUploadError(
 
   onChunkAttemptFailure(chunk.index, nextAttempt, chunkError);
 
-  if (nextAttempt > maxRetries) {
+  if (nextAttempt >= maxRetries) {
     return {
       retry: false,
       engineResult: {
@@ -353,6 +359,20 @@ private _isAbortError(err: unknown, signal: AbortSignal): boolean {
 
     let sliceSucceeded = false;
 
+    // Stall detection: the socket can die without any error or NetInfo event
+    // (network handoff). We track the last time real bytes moved and cancel the
+    // request if it goes silent for too long, turning a hang into a retry.
+    let stallWatchdog: ReturnType<typeof setInterval> | null = null;
+    let lastProgressAt = Date.now();
+    let stalled = false;
+
+    const clearStallWatchdog = (): void => {
+      if (stallWatchdog !== null) {
+        clearInterval(stallWatchdog);
+        stallWatchdog = null;
+      }
+    };
+
     const emitChunkProgress = (sentBytes: number): void => {
       const bounded = Math.max(0, Math.min(sentBytes, chunkBytes));
 
@@ -360,6 +380,7 @@ private _isAbortError(err: unknown, signal: AbortSignal): boolean {
         return;
       }
 
+      lastProgressAt = Date.now();
       this._lastEmittedChunkBytes = bounded;
 
       onProgress(
@@ -397,7 +418,31 @@ private _isAbortError(err: unknown, signal: AbortSignal): boolean {
       });
 
       this._activeRequest = request;
-      const response = await request;
+
+      lastProgressAt = Date.now();
+      stallWatchdog = setInterval(() => {
+        if (Date.now() - lastProgressAt >= STALL_TIMEOUT_MS) {
+          stalled = true;
+          clearStallWatchdog();
+          request.cancel();
+        }
+      }, 1000);
+
+      let response: Awaited<typeof request>;
+      try {
+        response = await request;
+      } catch (err) {
+        // A stall-triggered cancel must retry, not be treated as a user abort.
+        if (stalled && !signal.aborted) {
+          throw new Error(
+            `[FastPix] Chunk ${chunk.index} stalled — no progress for ${STALL_TIMEOUT_MS} ms; will retry.`,
+          );
+        }
+        throw err;
+      } finally {
+        clearStallWatchdog();
+      }
+
       this._activeRequest = null;
       this._clearSyntheticTicker();
 
@@ -416,6 +461,7 @@ private _isAbortError(err: unknown, signal: AbortSignal): boolean {
       }
     } finally {
       this._clearSyntheticTicker();
+      clearStallWatchdog();
       if (sliceSucceeded) {
         RNBlobUtil.fs.exists(tempPath)
           .then((exists) => {
