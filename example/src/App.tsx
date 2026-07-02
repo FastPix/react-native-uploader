@@ -1,6 +1,5 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
-  SafeAreaView,
   View,
   Text,
   TouchableOpacity,
@@ -242,7 +241,7 @@ export default function App() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.pageContent}
         showsVerticalScrollIndicator={false}>
@@ -401,7 +400,7 @@ export default function App() {
           </ScrollView>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 

@@ -30,7 +30,7 @@ stages:
 
     - script: |
         corepack enable
-        yarn install --immutable
+        YARN_ENABLE_SCRIPTS=false yarn install --immutable
       displayName: 'Install dependencies (Yarn 4)'
 
     - script: yarn test:coverage
