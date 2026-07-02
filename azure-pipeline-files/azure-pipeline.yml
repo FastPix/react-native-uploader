@@ -23,6 +23,19 @@ stages:
     - checkout: self
       fetchDepth: 0
 
+    - task: NodeTool@0 #NOSONAR
+      displayName: 'Use Node.js 24.13.0'
+      inputs:
+        versionSpec: '24.13.0'
+
+    - script: |
+        corepack enable
+        yarn install --immutable
+      displayName: 'Install dependencies (Yarn 4)'
+
+    - script: yarn test:coverage
+      displayName: 'Run tests with coverage'
+
     - task: SonarCloudPrepare@3 # NOSONAR
       displayName: 'Prepare SonarCloud Analysis'
       inputs:
@@ -38,6 +51,9 @@ stages:
           sonar.projectName=react-native-uploader
           sonar.sources=.
           sonar.sourceEncoding=UTF-8
+          sonar.javascript.lcov.reportPaths=coverage/lcov.info
+          sonar.exclusions=**/node_modules/**,**/coverage/**,**/dist/**,**/lib/**,**/*.html
+          sonar.coverage.exclusions=**/__tests__/**,**/*.test.ts,example/**,**/*.config.js,**/*.config.mjs,babel.config.js
 
     - task: SonarCloudAnalyze@3   # NOSONAR
       displayName: 'Run SonarCloud Code Analysis'

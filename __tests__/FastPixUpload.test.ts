@@ -109,6 +109,45 @@ function setupSuccessfulEngine(): void {
   getMockStat().mockResolvedValue({ size: FILE_SIZE });
 }
 
+// Ensure a spy-able global fetch exists for the resume-probe tests.
+if (typeof globalThis.fetch !== 'function') {
+  globalThis.fetch = () => Promise.resolve(new Response(null));
+}
+
+// Start an upload, drive it to UPLOADING, then pause it → PAUSED.
+// The first engine.run() stays pending until we resolve it as an intentional
+// abort; the second engine.run() (on resume) succeeds.
+async function startPausedUpload(): Promise<FastPixUpload> {
+  getMockStat().mockResolvedValue({ size: FILE_SIZE });
+  let count = 0;
+  let resolveFirst: (v: { success: boolean; error?: Error }) => void = () => undefined;
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { UploadEngine } = require('../src/core/UploadEngine') as { UploadEngine: jest.Mock };
+  UploadEngine.mockImplementation(() => {
+    count += 1;
+    const isFirst = count === 1;
+    return {
+      run: jest.fn().mockImplementation(() =>
+        isFirst
+          ? new Promise<{ success: boolean; error?: Error }>((res) => {
+              resolveFirst = res;
+            })
+          : Promise.resolve({ success: true }),
+      ),
+      abort: jest.fn(),
+      setStartOffset: jest.fn(),
+    };
+  });
+
+  const upload = buildUpload();
+  upload.start();
+  await new Promise((r) => setTimeout(r, 0)); // flush to UPLOADING
+  upload.pause(); // → PAUSED, aborts the first engine
+  resolveFirst({ success: false, error: new Error('aborted') });
+  await new Promise((r) => setTimeout(r, 0)); // let the paused run settle
+  return upload;
+}
+
 // ─────────────────────────────────────────────
 describe('FastPixUpload', () => {
   beforeEach(() => {
@@ -503,6 +542,102 @@ describe('FastPixUpload', () => {
       expect(abortSpy).toHaveBeenCalled();
       expect(pauseCb).toHaveBeenCalledWith({ reason: 'network' });
       resolveEngine({ success: false });
+    });
+  });
+
+  // ── engine callbacks → events ──────────────
+  describe('engine callbacks', () => {
+    it('forwards chunkAttempt, progress, chunkAttemptFailure and chunkSuccess as events', async () => {
+      getMockStat().mockResolvedValue({ size: FILE_SIZE });
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { UploadEngine } = require('../src/core/UploadEngine') as { UploadEngine: jest.Mock };
+      UploadEngine.mockImplementation(
+        (opts: {
+          onChunkAttempt: (i: number, a: number, t: number) => void;
+          onProgress: (s: number, cs: number, ce: number, f: number) => void;
+          onChunkAttemptFailure: (i: number, a: number, e: Error) => void;
+          onChunkSuccess: (i: number, o: number) => void;
+        }) => ({
+          run: jest.fn().mockImplementation(async () => {
+            opts.onChunkAttempt(0, 1, 2);
+            opts.onProgress(1024, 0, 1024, FILE_SIZE);
+            opts.onChunkAttemptFailure(0, 1, new Error('temp'));
+            opts.onChunkSuccess(0, FILE_SIZE);
+            return { success: true };
+          }),
+          abort: jest.fn(),
+          setStartOffset: jest.fn(),
+        }),
+      );
+
+      const upload = buildUpload();
+      const chunkAttempt = jest.fn();
+      const progress = jest.fn();
+      const chunkFail = jest.fn();
+      const chunkSuccess = jest.fn();
+      upload.on('chunkAttempt', chunkAttempt);
+      upload.on('progress', progress);
+      upload.on('chunkAttemptFailure', chunkFail);
+      upload.on('chunkSuccess', chunkSuccess);
+
+      await upload.start();
+
+      expect(chunkAttempt).toHaveBeenCalledWith({ chunkIndex: 0, attemptNumber: 1, totalChunkNumbers: 2 });
+      expect(progress).toHaveBeenCalledWith(
+        expect.objectContaining({ bytesUploaded: 1024, bytesTotal: FILE_SIZE }),
+      );
+      expect(chunkFail).toHaveBeenCalledWith(
+        expect.objectContaining({ chunkIndex: 0, attemptNumber: 1 }),
+      );
+      expect(chunkSuccess).toHaveBeenCalledWith({ chunkIndex: 0, offset: FILE_SIZE });
+    });
+  });
+
+  // ── resume() server-offset probe ───────────
+  describe('resume() offset probe', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('corrects the offset from a 308 probe and continues to COMPLETED', async () => {
+      const upload = await startPausedUpload();
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(
+          new Response(null, { status: 308, headers: { Range: 'bytes=0-1048575' } }),
+        );
+
+      const resumeCb = jest.fn();
+      upload.on('resume', resumeCb);
+      await upload.resume();
+
+      expect(globalThis.fetch).toHaveBeenCalled();
+      expect(resumeCb).toHaveBeenCalledWith({ fromOffset: 1048576 });
+      expect(upload.state).toBe('COMPLETED');
+    });
+
+    it('marks the upload COMPLETED when the probe returns 200 OK', async () => {
+      const upload = await startPausedUpload();
+      jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));
+
+      const successCb = jest.fn();
+      upload.on('success', successCb);
+      await upload.resume();
+
+      expect(successCb).toHaveBeenCalledTimes(1);
+      expect(upload.state).toBe('COMPLETED');
+    });
+
+    it('continues from the local offset when the probe request throws', async () => {
+      const upload = await startPausedUpload();
+      jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network down'));
+
+      const resumeCb = jest.fn();
+      upload.on('resume', resumeCb);
+      await upload.resume();
+
+      expect(resumeCb).toHaveBeenCalledWith({ fromOffset: 0 });
+      expect(upload.state).toBe('COMPLETED');
     });
   });
 });
