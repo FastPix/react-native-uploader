@@ -12,12 +12,12 @@ Please note that this SDK is designed to work only with FastPix and is not a gen
 * **Real-time Progress** – Track upload progress with smooth, continuous updates.
 * **Automatic Retries** – Recover from temporary failures with configurable exponential backoff.
 * **File Size Validation** – Optionally enforce a maximum file size before uploading.
-* **Flexible File URI Support** – Supports `file://` URIs, image picker URIs, and encoded file names.
+* **Flexible File URI Support** – Accepts `file://` URIs and plain filesystem paths, with automatic URL-decoding of percent-encoded paths.
 * **Lifecycle Events** – Listen to upload progress, state changes, and completion events.
 
-# Prerequisites:
+## Prerequisites
 
-## Getting started with FastPix:
+### Getting started with FastPix
 
 To get started with the SDK, you will need a signed URL.
 
@@ -25,7 +25,7 @@ To make API requests, you'll need a valid **Access Token** and **Secret Key**. S
 
 Once you have your credentials, use the [Upload media from device](https://fastpix.com/docs/video-on-demand-api/upload-and-import-videos/direct-upload-video-media) API to generate a signed URL for uploading media.
 
-## Platform Support:
+## Platform Support
 
 | Platform     | Minimum version    |
 | ------------ | ------------------ |
@@ -33,7 +33,7 @@ Once you have your credentials, use the [Upload media from device](https://fastp
 | iOS          | iOS 13.0           |
 | React Native | 0.70+              |
 
-## Installation:
+## Installation
 
 To install the SDK, you can use NPM, Yarn, or your preferred package manager:
 
@@ -43,29 +43,27 @@ npm install @fastpix/react-native-uploads
 yarn add @fastpix/react-native-uploads
 ```
 
-<!-- ### Peer dependencies
+The SDK bundles its runtime dependencies (`@react-native-community/netinfo`, `react-native-blob-util`, and `axios`), so there are no peer dependencies to install manually.
+
+### iOS — install native pods
+
+The bundled native modules auto-link on React Native 0.70+. After installing the package, run:
 
 ```bash
-npm install @react-native-community/netinfo react-native-blob-util
+cd ios && pod install && cd ..
 ```
 
-**iOS — CocoaPods:**
-
-```bash
-cd ios && pod install
-``` -->
-
-<!-- **Android:** `react-native-blob-util` and `@react-native-community/netinfo` auto-link on React Native 0.60+. No manual linking needed. -->
+**Android:** No manual linking or extra setup is required — the native modules auto-link.
 
 ## Basic Usage
 
-## Import
+### Import
 
 ```javascript
 import { FastPixUpload } from "@fastpix/react-native-uploads";
 ```
 
-## Integration
+### Integration
 
 ```javascript
 const upload = new FastPixUpload({
@@ -250,14 +248,26 @@ The example demonstrates:
 
 Refer to the **`example/`** directory for the complete implementation.
 
+## Troubleshooting
 
-# References
+| Symptom | Likely cause | Fix |
+| ------- | ------------ | --- |
+| `File is empty or could not be read` | The `fileUri` points to a missing file, or a `content://` / asset URI the native layer can't `stat`. | Pass a resolved `file://` path or plain filesystem path. Copy picker/asset URIs to a local file first. |
+| `File size … exceeds the maximum allowed size` | The file is larger than `maxFileSize` (in **KB**). | Increase `maxFileSize`, or set it to `0` to disable the limit. |
+| `chunkSize` validation error | `chunkSize` is outside the allowed range. | Use a value between `5120` KB (5 MB) and `512000` KB (500 MB). |
+| Upload never starts / `start() ignored` | `start()` was called while the upload was not in the `IDLE` state. | Only call `start()` from `IDLE`; use `resume()` to continue a paused upload. |
+| Upload stalls after switching Wi-Fi ↔ cellular | The in-flight socket died without an offline/online event. | The SDK detects the transport switch and resumes from the server-confirmed offset automatically — no action needed. |
+| iOS build fails to find native modules | Pods not installed after adding the package. | Run `cd ios && pod install`. |
+| No events firing | Listeners were attached after `abort()`, which removes all listeners. | Re-attach listeners on a new `FastPixUpload` instance after an abort. |
+
+Enable `enableLogs: true` in the constructor to see detailed SDK-internal logs while diagnosing issues (disable in production).
+
+## References
 
 [FastPix Homepage](https://www.fastpix.com/)
 [FastPix Dashboard](https://dashboard.fastpix.com/)
-<!-- [React Native Uploads github](https://github.com/FastPix/react-native-uploads-sdk) -->
 
-# Detailed Usage:
+## Detailed Usage
 
 For more detailed steps and advanced usage, please refer to the official [FastPix Documentation](https://fastpix.com/docs/upload-videos/upload-videos-from-device#resumable-uploading-of-large-files).
  
