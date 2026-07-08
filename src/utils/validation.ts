@@ -98,7 +98,7 @@ export function validateAndNormalizeOptions(
   const maxFileSize = opts.maxFileSize ?? 0; // 0 = no limit
   if (typeof maxFileSize !== 'number' || maxFileSize < 0) {
     throw new Error(
-      '[FastPix] "maxFileSize" must be a non-negative number (bytes). ' +
+      '[FastPix] "maxFileSize" must be a non-negative number (KB). ' +
         'Example: 100 * 1024 for 100 MB.',
     );
   }
