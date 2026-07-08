@@ -158,7 +158,8 @@ jobs:
         if: env.turbo_cache_hit != 1 && steps.cocoapods-cache.outputs.cache-hit != 'true'
         run: |
           cd example
-          bundle install --deployment
+          bundle config set --local deployment true
+          bundle install
           bundle exec pod repo update --verbose
           bundle exec pod install --project-directory=ios
 
