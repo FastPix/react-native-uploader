@@ -7,20 +7,19 @@ The **FastPix React Native Uploads SDK** provides reliable, resumable, and high-
 ## Table of Contents
 
 - [Features](#features)
-- [Chunk-Level Retry Tracking](#chunk-level-retry-tracking)
 - [Prerequisites](#prerequisites)
 - [Platform Support](#platform-support)
 - [Installation](#installation)
 - [Basic Usage](#basic-usage)
 - [Resumable Uploads: Pause, Resume & Network Recovery](#resumable-uploads-pause-resume--network-recovery)
+- [Chunk-Level Retry Tracking](#chunk-level-retry-tracking)
 - [Lifecycle Events Reference](#lifecycle-events-reference)
 - [Upload Control Methods](#upload-control-methods)
 - [API Reference](#api-reference)
-- [Parameters Accepted](#parameters-accepted)
+  - [Configuration Parameters](#configuration-parameters)
 - [Example App](#example-app)
 - [Troubleshooting](#troubleshooting)
-- [Benefits](#benefits)
-- [References](#references)
+- [Additional References](#additional-references)
 
 ## Features
 
@@ -33,35 +32,9 @@ The **FastPix React Native Uploads SDK** provides reliable, resumable, and high-
 * **Flexible File URI Support** – Accepts `file://` URIs and plain filesystem paths, with automatic URL-decoding of percent-encoded paths.
 * **Lifecycle Events** – Listen to upload progress, state changes, and completion events.
 
-## Chunk-Level Retry Tracking
-
-Retries are tracked **per individual chunk** rather than with a single global counter. Each chunk gets its own budget of `maxRetries` attempts with exponential back-off, so one flaky chunk can never exhaust the retry allowance of the others.
-
-**Benefits**
-
-* **No app sluggishness** – a single problematic chunk is isolated and doesn't stall the rest of the upload.
-* **Better error isolation** – a failed chunk never affects the retry limits of chunks that already succeeded.
-* **Precise recovery** – on a network blip only the in-flight chunk retries; completed chunks are never re-uploaded.
-
-You can observe this live through the chunk events:
-
-```javascript
-upload.on("chunkAttempt", ({ chunkIndex, attemptNumber, totalChunkNumbers }) => {
-  console.log(`Chunk ${chunkIndex}/${totalChunkNumbers} — attempt ${attemptNumber}`);
-});
-
-upload.on("chunkAttemptFailure", ({ chunkIndex, attemptNumber, error }) => {
-  console.warn(`Chunk ${chunkIndex} failed (attempt ${attemptNumber}/${/* maxRetries */ 5}): ${error.message}`);
-});
-
-upload.on("chunkSuccess", ({ chunkIndex }) => {
-  console.log(`Chunk ${chunkIndex} uploaded`);
-});
-```
-
 ## Prerequisites
 
-### Getting started with FastPix
+### Generate a signed upload URL
 
 To get started with the SDK, you will need a signed URL.
 
@@ -121,7 +94,7 @@ export async function generateSignedUrl(metadata = { uploadedBy: "react_native_a
 
 ### Integration: create a Signed URL, then Upload
 
-Because `endpoint` accepts an **async factory** (`() => Promise<string>`), you can plug the signed-URL generator straight in. The factory runs once when `start()` is called, so the URL is created lazily and stays fresh:
+Because `endpoint` accepts an **async factory** (`() => Promise<string>`), you can plug the signed-URL generator straight in. The async factory runs once when `start()` is called, so the URL is created lazily and stays fresh:
 
 ```javascript
 import { FastPixUpload } from "@fastpix/react-native-uploads";
@@ -154,7 +127,7 @@ export async function uploadVideo(fileUri) {
 }
 ```
 
-This example uses every constructor option — see [Parameters Accepted](#parameters-accepted) for the full table with types, defaults, and constraints.
+This example uses every constructor option — see [Configuration Parameters](#configuration-parameters) for the full table with types, defaults, and constraints.
 
 ## Platform Support
 
@@ -204,13 +177,7 @@ const upload = new FastPixUpload({
 await upload.start();
 ```
 
-**Parameters used above:**
-
-| Name        | Type                                | Required | Description                                                                                                                                       |
-| ----------- | ----------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `endpoint`  | `string` or `() => Promise<string>` | Required | The signed FastPix upload URL, or an async factory that returns one. The factory is called once at `start()` — useful when tokens are short-lived. |
-| `fileUri`   | `string`                            | Required | Local file path from your file picker. Accepts `file://` URIs, plain paths.                                                                       |
-| `chunkSize` | `number` (in KB)                    | Optional | Size of each chunk in kilobytes. Default is `5120` KB (5 MB). **Minimum:** 5120 KB (5 MB), **Maximum:** 512000 KB (500 MB). **Must be a multiple of 256.** |
+**Parameters used above:** `endpoint`, `fileUri`, `chunkSize` — see [Configuration Parameters](#configuration-parameters) for types, defaults, and constraints.
 
 ## Resumable Uploads: Pause, Resume & Network Recovery
 
@@ -249,14 +216,7 @@ upload.pause();            // pauses immediately, preserving progress
 await upload.resume();     // re-syncs the server offset, then continues
 ```
 
-**Parameters used above:**
-
-| Name         | Type                                | Required | Description                                                                                                                                       |
-| ------------ | ----------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `endpoint`   | `string` or `() => Promise<string>` | Required | The signed FastPix upload URL, or an async factory that returns one. The factory is called once at `start()` — useful when tokens are short-lived. |
-| `fileUri`    | `string`                            | Required | Local file path from your file picker. Accepts `file://` URIs, plain paths.                                                                       |
-| `chunkSize`  | `number` (in KB)                    | Optional | Size of each chunk in kilobytes. Default is `5120` KB (5 MB). **Minimum:** 5120 KB (5 MB), **Maximum:** 512000 KB (500 MB). **Must be a multiple of 256.** |
-| `maxRetries` | `number`                            | Optional | Maximum retry attempts per failed chunk before the upload fails. Default is `5`.                                                                  |
+**Parameters used above:** `endpoint`, `fileUri`, `chunkSize`, `maxRetries` — see [Configuration Parameters](#configuration-parameters) for types, defaults, and constraints.
 
 ### Full React component: progress bar with pause / resume / abort
 
@@ -320,26 +280,43 @@ export function VideoUploader({ fileUri }) {
 }
 ```
 
-**Parameters used above:**
-
-| Name          | Type                                | Required | Description                                                                                                                                       |
-| ------------- | ----------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `endpoint`    | `string` or `() => Promise<string>` | Required | The signed FastPix upload URL, or an async factory that returns one. The factory is called once at `start()` — useful when tokens are short-lived. |
-| `fileUri`     | `string`                            | Required | Local file path from your file picker. Accepts `file://` URIs, plain paths.                                                                       |
-| `chunkSize`   | `number` (in KB)                    | Optional | Size of each chunk in kilobytes. Default is `5120` KB (5 MB). **Minimum:** 5120 KB (5 MB), **Maximum:** 512000 KB (500 MB). **Must be a multiple of 256.** |
-| `maxRetries`  | `number`                            | Optional | Maximum retry attempts per failed chunk before the upload fails. Default is `5`.                                                                  |
-| `retryDelay`  | `number` (in ms)                    | Optional | Initial delay before the first retry. Each subsequent retry doubles the delay (exponential back-off). Default is `1000`.                          |
-| `enableLogs`  | `boolean`                           | Optional | Enable SDK-internal debug logging to the console. Recommended for development; disable in production. Default is `false`.                         |
+**Parameters used above:** `endpoint`, `fileUri`, `chunkSize`, `maxRetries`, `retryDelay`, `enableLogs` — see [Configuration Parameters](#configuration-parameters) for types, defaults, and constraints.
 
 ### Automatic network recovery
 
-You don't need to write any reconnection logic. While an upload is in flight the SDK monitors connectivity via `@react-native-community/netinfo`:
+The SDK automatically resumes uploads when network connectivity is restored. While an upload is in flight the SDK monitors connectivity via `@react-native-community/netinfo`:
 
 * **Goes offline** → the upload pauses and emits `pause` with `reason: 'network'` (plus an `offline` event).
 * **Comes back online** → the upload resumes automatically from the last confirmed offset (emitting `online`, then `resume`).
 * **Transport switches** (Wi-Fi ↔ cellular) while a socket is mid-flight → the SDK detects the dead connection, re-syncs the server offset, and continues — no stalled upload, no manual retry.
 
 An upload paused by you (`reason: 'user'`) is **not** auto-resumed on reconnect — that stays under your control, so a user-paused upload never restarts behind their back.
+
+## Chunk-Level Retry Tracking
+
+Retries are tracked **per individual chunk** rather than with a single global counter. Each chunk gets its own budget of `maxRetries` attempts with exponential back-off, so one flaky chunk can never exhaust the retry allowance of the others.
+
+**Benefits**
+
+* **No app sluggishness** – a single problematic chunk is isolated and doesn't stall the rest of the upload.
+* **Better error isolation** – a failed chunk never affects the retry limits of chunks that already succeeded.
+* **Precise recovery** – on a network blip only the in-flight chunk retries; completed chunks are never re-uploaded.
+
+You can observe this live through the chunk events:
+
+```javascript
+upload.on("chunkAttempt", ({ chunkIndex, attemptNumber, totalChunkNumbers }) => {
+  console.log(`Chunk ${chunkIndex}/${totalChunkNumbers} — attempt ${attemptNumber}`);
+});
+
+upload.on("chunkAttemptFailure", ({ chunkIndex, attemptNumber, error }) => {
+  console.warn(`Chunk ${chunkIndex} failed (attempt ${attemptNumber}/${/* maxRetries */ 5}): ${error.message}`);
+});
+
+upload.on("chunkSuccess", ({ chunkIndex }) => {
+  console.log(`Chunk ${chunkIndex} uploaded`);
+});
+```
 
 ## Lifecycle Events Reference
 
@@ -459,9 +436,51 @@ You can control the upload lifecycle with the following methods:
 
 ### `FastPixUpload`
 
-The main upload class. Construct it with [the options below](#parameters-accepted), then drive it with these methods, getters, and events.
+The main upload class. Construct it with the options below, then drive it with these methods, getters, and events.
 
-#### Methods
+### Configuration Parameters
+
+The `FastPixUpload` constructor accepts the following parameters:
+
+| Name                       | Type                                | Required | Description                                                                                                                                       |
+| -------------------------- | ----------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `endpoint`                 | `string` or `() => Promise<string>` | Required | The signed FastPix upload URL, or an async factory that returns one. The factory is called once at `start()` — useful when tokens are short-lived. |
+| `fileUri`                  | `string`                            | Required | Local file path from your file picker. Accepts `file://` URIs, plain paths.         |
+| `chunkSize`                | `number` (in KB)                    | Optional | Size of each chunk in kilobytes. Default is `5120` KB (5 MB). **Minimum:** 5120 KB (5 MB), **Maximum:** 512000 KB (500 MB). **Must be a multiple of 256** — e.g. any `N * 1024` value is safe. |
+| `maxRetries`               | `number`                            | Optional | Maximum retry attempts per failed chunk before the upload fails. Default is `5`.                                                                  |
+| `retryDelay`               | `number` (in ms)                    | Optional | Initial delay before the first retry. Each subsequent retry doubles the delay (exponential back-off). Default is `1000`.                          |
+| `maxFileSize`              | `number` (in KB)                 | Optional | Maximum allowed file size. `0` means no limit. Files exceeding this fail immediately before any network request. Default is `0`.                  |
+| `enableLogs`               | `boolean`                           | Optional | Enable SDK-internal debug logging to the console. Recommended for development; disable in production. Default is `false`.                         |
+
+#### Example usage of integrating all parameters
+
+```javascript
+import { FastPixUpload } from "@fastpix/react-native-uploads";
+
+const upload = new FastPixUpload({
+  endpoint: "https://storage.googleapis.com/...signed-url...", // Signed URL for uploading
+  fileUri: "file://...File_Path...", // file:// URI to upload
+  chunkSize: 5 * 1024, // default is 5 MB per chunk
+  maxRetries: 3, // Retry each failed chunk up to 3 times
+  retryDelay: 1000, // Initial 1s delay, doubling each retry
+  maxFileSize: 200 * 1024, // 200 MB limit
+  enableLogs: false, // Debug logs in development only
+});
+
+upload.on("started", ({ fileSize }) => console.log(`Starting ${fileSize} bytes`));
+upload.on("progress", ({ percentage }) => console.log(`${percentage}%`));
+upload.on("success", () => console.log("Upload complete!"));
+upload.on("error", ({ message }) => console.error(message));
+
+await upload.start();
+
+// Control:
+// upload.pause();
+// await upload.resume();
+// upload.abort();
+```
+
+### Methods
 
 | Method | Signature | Description |
 | ------ | --------- | ----------- |
@@ -472,7 +491,7 @@ The main upload class. Construct it with [the options below](#parameters-accepte
 | `on(event, handler)`  | `(event, handler) => () => void` | Subscribes to a [lifecycle event](#supported-events). **Returns an unsubscribe function.** |
 | `off(event, handler)` | `(event, handler) => void`       | Manually removes a previously registered listener. |
 
-#### Getters
+### Getters
 
 | Getter | Type | Description |
 | ------ | ---- | ----------- |
@@ -520,47 +539,6 @@ Describes the byte range of a single chunk. Exported for consumers that need to 
 
 For the full list of event payloads, see [Supported Events](#supported-events).
 
-## Parameters Accepted
-
-The `FastPixUpload` constructor accepts the following parameters:
-
-| Name                       | Type                                | Required | Description                                                                                                                                       |
-| -------------------------- | ----------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `endpoint`                 | `string` or `() => Promise<string>` | Required | The signed FastPix upload URL, or an async factory that returns one. The factory is called once at `start()` — useful when tokens are short-lived. |
-| `fileUri`                  | `string`                            | Required | Local file path from your file picker. Accepts `file://` URIs, plain paths.         |
-| `chunkSize`                | `number` (in KB)                    | Optional | Size of each chunk in kilobytes. Default is `5120` KB (5 MB). **Minimum:** 5120 KB (5 MB), **Maximum:** 512000 KB (500 MB). **Must be a multiple of 256** — e.g. any `N * 1024` value is safe. |
-| `maxRetries`               | `number`                            | Optional | Maximum retry attempts per failed chunk before the upload fails. Default is `5`.                                                                  |
-| `retryDelay`               | `number` (in ms)                    | Optional | Initial delay before the first retry. Each subsequent retry doubles the delay (exponential back-off). Default is `1000`.                          |
-| `maxFileSize`              | `number` (in KB)                 | Optional | Maximum allowed file size. `0` means no limit. Files exceeding this fail immediately before any network request. Default is `0`.                  |
-| `enableLogs`               | `boolean`                           | Optional | Enable SDK-internal debug logging to the console. Recommended for development; disable in production. Default is `false`.                         |
-
-### Example usage of integrating all parameters
-
-```javascript
-import { FastPixUpload } from "@fastpix/react-native-uploads";
-
-const upload = new FastPixUpload({
-  endpoint: "https://storage.googleapis.com/...signed-url...", // Signed URL for uploading
-  fileUri: "file://...File_Path...", // file:// URI to upload
-  chunkSize: 5 * 1024, // default is 5 MB per chunk
-  maxRetries: 3, // Retry each failed chunk up to 3 times
-  retryDelay: 1000, // Initial 1s delay, doubling each retry
-  maxFileSize: 200 * 1024, // 200 MB limit
-  enableLogs: false, // Debug logs in development only
-});
-
-upload.on("started", ({ fileSize }) => console.log(`Starting ${fileSize} bytes`));
-upload.on("progress", ({ percentage }) => console.log(`${percentage}%`));
-upload.on("success", () => console.log("Upload complete!"));
-upload.on("error", ({ message }) => console.error(message));
-
-await upload.start();
-
-// Control:
-// upload.pause();
-// await upload.resume();
-// upload.abort();
-```
 ## Example App
 
 A complete React Native example application is included in the repository to help you get started quickly.
@@ -591,7 +569,7 @@ Refer to the **`example/`** directory for the complete implementation.
 
 Enable `enableLogs: true` in the constructor to see detailed SDK-internal logs while diagnosing issues (disable in production).
 
-## References
+## Additional References
 
 [FastPix Homepage](https://www.fastpix.com/)
 [FastPix Dashboard](https://dashboard.fastpix.com/)
@@ -599,4 +577,3 @@ Enable `enableLogs: true` in the constructor to see detailed SDK-internal logs w
 ## Detailed Usage
 
 For more detailed steps and advanced usage, please refer to the official [FastPix Documentation](https://fastpix.com/docs/upload-videos/upload-videos-from-device#resumable-uploading-of-large-files).
- 
