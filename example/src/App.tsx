@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import {launchImageLibrary} from 'react-native-image-picker';
 import NetInfo from '@react-native-community/netinfo';
-import {FastPixUpload} from 'react-native-uploads';
+import {FastPixUpload} from '@fastpix/react-native-uploads';
 
 import ApiService from './Services/ApiService';
 

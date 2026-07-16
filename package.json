@@ -1,5 +1,5 @@
 {
-  "name": "react-native-uploads",
+  "name": "@fastpix/react-native-uploads",
   "version": "0.1.0",
   "description": "FastPix React Native Resumable Upload SDK",
   "main": "./lib/module/index.js",
@@ -48,14 +48,14 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Shivansh-Fastpix/react-native-uploads.git"
+    "url": "git+https://github.com/FastPix/react-native-uploader.git"
   },
-  "author": "shivansh chouhan <devs@fastpix.com> (https://github.com/Shivansh-Fastpix)",
+  "author": "FastPix, Inc <devs@fastpix.com> (https://github.com/FastPix)",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/Shivansh-Fastpix/react-native-uploads/issues"
+    "url": "https://github.com/FastPix/react-native-uploader/issues"
   },
-  "homepage": "https://github.com/Shivansh-Fastpix/react-native-uploads#readme",
+  "homepage": "https://github.com/FastPix/react-native-uploader#readme",
   "publishConfig": {
     "registry": "https://registry.npmjs.org/"
   },

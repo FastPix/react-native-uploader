@@ -23,6 +23,16 @@ export default [
     },
   },
   {
-    ignores: ['node_modules/', 'lib/'],
+    // Build/generated output. Without these, a local Android or iOS build
+    // leaves artifacts that bury real lint findings under ~100k reports.
+    ignores: [
+      'node_modules/',
+      'lib/',
+      'dist/',
+      'coverage/',
+      '**/build/',
+      '**/Pods/',
+      '.turbo/',
+    ],
   },
 ];
