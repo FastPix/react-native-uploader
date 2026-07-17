@@ -6,27 +6,18 @@ labels: enhancement
 assignees: ''
 ---
 
+Suggest an enhancement for the FastPix React Native Uploads SDK.
+Describe the problem you're trying to solve and the solution you'd like to see.
+
 ## Feature Description
 A clear and concise description of the feature you'd like to see.
 
-## Problem Statement
-Is your feature request related to a problem? Please describe.
-A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
+## Problem
+Describe the problem or limitation this feature would address.
 
 ## Proposed Solution
-Describe the solution you'd like to see implemented.
-
-If it affects the public API, sketch how it would look:
-
-```javascript
-import { FastPixUpload } from '@fastpix/react-native-uploads';
-
-const upload = new FastPixUpload({
-  endpoint: '<SIGNED_UPLOAD_URL>',
-  fileUri: 'file:///path/to/video.mp4',
-  // proposed option here
-});
-```
+Describe how you think this feature should work.
+If the feature changes the public API, include an example of the proposed API.
 
 ## Alternatives Considered
 Describe any alternative solutions or features you've considered.
@@ -41,5 +32,21 @@ Which platforms does this apply to?
 - [ ] Android
 - [ ] Both
 
+## Impact
+How would this feature improve the SDK?
+
+- [ ] Improves developer experience
+- [ ] Improves upload reliability
+- [ ] Improves performance
+- [ ] Improves platform compatibility
+- [ ] Adds new functionality
+- [ ] Other (describe):
+
 ## Additional Context
 Add any other context, mockups, or examples about the feature request here.
+
+## Checklist
+- [ ] Searched for existing feature requests
+- [ ] Clearly described the problem
+- [ ] Described the proposed solution
+- [ ] Included a real-world use case

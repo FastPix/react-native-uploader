@@ -9,6 +9,12 @@ assignees: ''
 # Bug Description
 Provide a clear and concise description of the issue you encountered with the FastPix React Native Uploads SDK.
 
+## Severity
+- [ ] Blocks production
+- [ ] High
+- [ ] Medium
+- [ ] Low
+
 ---
 
 # Steps to Reproduce
@@ -25,7 +31,7 @@ yarn add @fastpix/react-native-uploads
 
 This SDK depends on `react-native-blob-util` and `@react-native-community/netinfo`. On iOS, run `pod install` after installing.
 
-### 2. **Example Code to Reproduce**
+### 2. Minimal Reproduction
 
 Provide a minimal reproducible snippet that shows the issue. Example:
 
@@ -49,8 +55,9 @@ await upload.start();
 
 Replace with the exact code where the bug occurs.
 
-> **Never paste your Access Token or Secret Key into this issue.** Signed URLs are short-lived, but redact them anyway.
-
+> **Important**
+>
+> Never include Access Tokens, Secret Keys, signed upload URLs, or other sensitive information. Redact all secrets before submitting your issue.
 ---
 
 # Expected Behavior
@@ -86,11 +93,15 @@ Replace with the exact code where the bug occurs.
 - **maxRetries / retryDelay**: [e.g., 3 / 1000]
 - **maxFileSize**: [e.g., 0 (no limit)]
 
+Upload type:
+- [ ] Direct upload
+- [ ] Resumable upload
+
 ---
 
 # Logs / Errors / Console Output
 
-Re-run with `enableLogs: true` and paste the `[FastPix:*]` output here.
+If possible, enable SDK logging (`enableLogs: true`) and paste the relevant logs below.
 
 ```
 Paste SDK logs, Metro output, or native crash logs here
@@ -99,7 +110,7 @@ Paste SDK logs, Metro output, or native crash logs here
 ---
 
 # Additional Context
-Add any information that might help, such as:
+Provide any additional information that might help reproduce the issue, such as:
 
 - Does it reproduce on both iOS and Android, or only one?
 - Was the upload paused/resumed, or aborted, before the issue?
@@ -112,3 +123,12 @@ Add any information that might help, such as:
 
 # Screenshots / Screen Recording
 If applicable, attach screenshots or a short video demonstrating the issue.
+
+---
+
+# Checklist
+- [ ] Included a minimal reproduction
+- [ ] Included environment details
+- [ ] Included SDK logs (if available)
+- [ ] Redacted all sensitive information
+- [ ] Checked for existing issues

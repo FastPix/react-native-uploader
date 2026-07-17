@@ -8,7 +8,8 @@ assignees: ''
 
 # Question/Support
 
-Thank you for reaching out! We're here to help you with the FastPix React Native Uploads SDK. To get faster and more accurate help, please provide the following information:
+Need help with the FastPix React Native Uploads SDK?
+Complete the sections below so we can understand your question and help you more quickly.
 
 ## Question Type
 - [ ] How to use a specific feature
@@ -18,7 +19,7 @@ Thank you for reaching out! We're here to help you with the FastPix React Native
 - [ ] Pause, resume, or network recovery behaviour
 - [ ] Performance question
 - [ ] Troubleshooting help
-- [ ] Other: _______________
+- [ ] Other (describe):
 
 ## Question
 **What would you like to know?**
@@ -26,23 +27,16 @@ Thank you for reaching out! We're here to help you with the FastPix React Native
 <!-- Provide a clear and specific question about the Uploads SDK -->
 
 ## What You've Tried
-**What have you already attempted to solve this?**
+Describe what you've already tried.
+Include any relevant code snippets if applicable.
 
 ```javascript
-import { FastPixUpload } from '@fastpix/react-native-uploads';
-
-const upload = new FastPixUpload({
-  endpoint: '<SIGNED_UPLOAD_URL>',
-  fileUri: 'file:///path/to/video.mp4',
-  enableLogs: true,
-});
-
-// Your attempted code here
-await upload.start();
+// Paste any relevant code here.
 ```
 
-> **Never paste your Access Token or Secret Key here.** Redact signed URLs too.
-
+> **Important**
+>
+> Never include Access Tokens, Secret Keys, signed upload URLs, or other sensitive information. Redact all secrets before submitting your issue.
 ## Current Setup
 **Describe your current setup:**
 - How you obtain the signed URL (backend service, endpoint factory function, hardcoded for testing)
@@ -58,17 +52,11 @@ await upload.start();
 - **Node/npm**: [e.g., Node 20, npm 10]
 - **Package manager**: [npm / yarn / pnpm]
 
-## Configuration
-**Current upload configuration:**
+## Upload Configuration
+If relevant, paste your current upload configuration.
 
 ```javascript
-{
-  chunkSize: 5120,    // KB — must be >= 5120 and divisible by 256
-  maxRetries: 3,
-  retryDelay: 1000,
-  maxFileSize: 0,     // KB — 0 means no limit
-  enableLogs: true,
-}
+// Paste your configuration here.
 ```
 
 ## Expected Outcome
@@ -88,14 +76,7 @@ await upload.start();
 - [ ] Consumer video app (reels, social, UGC)
 - [ ] Enterprise / internal tooling
 - [ ] Video streaming product
-- [ ] Other: _______________
-
-### Timeline
-**When do you need this resolved?**
-- [ ] ASAP (blocking development)
-- [ ] This week
-- [ ] This month
-- [ ] No rush
+- [ ] Other (describe):
 
 ### Resources Checked
 **What resources have you already checked?**
@@ -105,7 +86,7 @@ await upload.start();
 - [ ] Troubleshooting section
 - [ ] Example app (`example/`)
 - [ ] GitHub Issues
-- [ ] Other: _______________
+- [ ] Other (describe):
 
 ## Priority
 Please indicate the urgency:

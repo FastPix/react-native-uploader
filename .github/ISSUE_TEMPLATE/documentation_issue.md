@@ -8,7 +8,8 @@ assignees: ''
 
 # Documentation Issue
 
-Thank you for helping improve the FastPix React Native Uploads SDK documentation! Please provide the following information:
+Thank you for helping improve the FastPix React Native Uploads SDK documentation.
+Complete the sections below to help us review and resolve the issue.
 
 ## Issue Type
 - [ ] Missing documentation
@@ -16,32 +17,21 @@ Thank you for helping improve the FastPix React Native Uploads SDK documentation
 - [ ] Unclear explanation
 - [ ] Broken links
 - [ ] Outdated content
-- [ ] Other: _______________
+- [ ] Other (describe):
 
 ## Description
-**Provide a clear description of the documentation issue:**
+Describe the documentation issue.
 
 <!-- Example: Steps, methods, or code snippets are confusing, incomplete, or incorrect -->
 
 ## Current Documentation
-**Paste the current content here:**
+Paste the current documentation, if applicable.
 
 <!-- Example: Copy the section of the README that is incorrect -->
 
 ## Expected Documentation
-**How should the documentation look instead?**
-
-```javascript
-// Example: correct usage for the FastPix React Native Uploads SDK
-import { FastPixUpload } from '@fastpix/react-native-uploads';
-
-const upload = new FastPixUpload({
-  endpoint: '<SIGNED_UPLOAD_URL>',
-  fileUri: 'file:///path/to/video.mp4',
-});
-
-await upload.start();
-```
+Describe how the documentation should be updated.
+Include replacement text or code examples if applicable.
 
 ## Location
 **Where is this issue located?**
@@ -52,7 +42,7 @@ await upload.start();
 - [ ] Lifecycle Events Reference
 - [ ] Example app (`example/`)
 - [ ] Code examples
-- [ ] Other: _______________
+- [ ] Other (describe):
 
 **Specific file or section:**
 <!-- e.g., README.md line 45 or the "Resumable Uploads" section -->
@@ -64,10 +54,10 @@ await upload.start();
 - [ ] Causes confusion for existing users
 - [ ] Leads to incorrect implementation
 - [ ] Creates support requests
-- [ ] Other: _______________
+- [ ] Other (describe):
 
 ## Proposed Fix
-**Suggested correction or updated example:**
+Describe the proposed update.
 
 <!-- Example: Provide correct code snippet, instructions, or description -->
 
@@ -76,18 +66,6 @@ Add any other context about the issue here.
 
 ## Screenshots
 <!-- If applicable, include screenshots of the documentation issue -->
-
-### Related Issues
-- GitHub Issues: [Link related issues]
-- User Feedback: [Link to complaints or confusion]
-
-### Testing
-**How did you discover this issue?**
-
-- [ ] While following the documentation
-- [ ] User reported confusion
-- [ ] Code didn't work as documented
-- [ ] Other: _______________
 
 ## Priority
 - [ ] Critical (Blocks users from using the SDK)
