@@ -1,62 +1,42 @@
-# Publishes the package to npm when a GitHub Release is created.
-# Mirrors the FastPix org convention (see FastPix/web-player-component),
-# adapted for this repo's Yarn 4 + react-native-builder-bob toolchain.
+# This workflow will run tests using node and then publish a package to npm when a release is created
+# For more information see: https://docs.github.com/en/actions/publishing-packages/publishing-nodejs-packages
 
 name: Node.js Package
 
 on:
   release:
     types: [created]
-  workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
-  verify:
+  build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-
-      - name: Setup
-        uses: ./.github/actions/setup
-
-      - name: Lint files
-        run: yarn lint
-
-      - name: Typecheck files
-        run: yarn typecheck
-
-      - name: Run unit tests
-        run: yarn test --maxWorkers=2
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      # npm install (not `npm ci`): this repo does not commit a package-lock.json.
+      - run: npm install
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test -- --maxWorkers=2
 
   publish-npm:
-    needs: verify
+    needs: build
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-
-      - name: Setup
-        uses: ./.github/actions/setup
-
-      # Re-run setup-node last so it writes the .npmrc auth entry for the
-      # registry; the composite setup above does not configure a registry.
-      - name: Configure npm registry
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           registry-url: https://registry.npmjs.org/
+      - run: npm install
 
-      # Builds lib/module (bob) and lib/typescript (tsc) — the only dirs the
-      # published package actually ships from.
-      - name: Build package
-        run: yarn prepare
+      # Builds lib/module (bob) and lib/typescript (tsc) — the dirs the
+      # published package ships from. lib/ is gitignored, so this must run.
+      - run: npm run prepare
 
-      - name: Publish to npm
-        run: npm publish --access public --ignore-scripts
+      # --ignore-scripts stops `prepare` running a second time during publish.
+      - run: npm publish --access public --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GRANULAR_NPM_PUBLISH_TOKEN_NEW }}

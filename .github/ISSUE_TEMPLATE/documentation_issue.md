@@ -40,7 +40,7 @@ Include replacement text or code examples if applicable.
 - [ ] CHANGELOG.md
 - [ ] API Reference / Configuration Parameters
 - [ ] Lifecycle Events Reference
-- [ ] Example app (`example/`)
+- [ ] Example app (`test-example/`)
 - [ ] Code examples
 - [ ] Other (describe):
 

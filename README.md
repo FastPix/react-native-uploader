@@ -50,7 +50,7 @@ A signed URL is a pre-authenticated URL that allows secure, direct uploads to Fa
 
 ### Sample Code: Generating a Signed URL
 
-Here is a self-contained service that calls the FastPix Direct Upload API and returns a signed URL. It uses `axios` and `base-64` for the Basic Auth header (the same approach used by the bundled example app in [`example/src/Services/ApiService.ts`](example/src/Services/ApiService.ts)):
+Here is a self-contained service that calls the FastPix Direct Upload API and returns a signed URL. It uses `axios` and `base-64` for the Basic Auth header (the same approach used by the bundled example app in [`test-example/src/Services/ApiService.ts`](test-example/src/Services/ApiService.ts)):
 
 > This is **your** backend/service code, not part of the SDK. Install its helpers with `npm install axios base-64`. On a Node backend you can drop `base-64` and use `Buffer.from(...).toString("base64")` instead.
 
@@ -139,12 +139,10 @@ This example uses every constructor option — see [Configuration Parameters](#c
 
 ## Installation
 
-To install the SDK, you can use NPM, Yarn, or your preferred package manager:
+To install the SDK, use npm or your preferred package manager:
 
 ```bash
 npm install @fastpix/react-native-uploads
-# or
-yarn add @fastpix/react-native-uploads
 ```
 
 The SDK bundles its runtime dependencies (`@react-native-community/netinfo`, `react-native-blob-util`, and `axios`), so there are no peer dependencies to install manually.
@@ -220,7 +218,7 @@ await upload.resume();     // re-syncs the server offset, then continues
 
 ### Full React component: progress bar with pause / resume / abort
 
-A complete, copy-paste example wiring the resumable lifecycle to UI controls. The same flow is implemented end-to-end in the bundled [`example/`](example/) app.
+A complete, copy-paste example wiring the resumable lifecycle to UI controls. The same flow is implemented end-to-end in the bundled [`test-example/`](test-example/) app.
 
 ```jsx
 import React, { useEffect, useRef, useState } from "react";
@@ -553,7 +551,7 @@ The example demonstrates:
 * Network recovery
 * Error handling
 
-Refer to the **`example/`** directory for the complete implementation.
+Refer to the **`test-example/`** directory for the complete implementation.
 
 ## Troubleshooting
 

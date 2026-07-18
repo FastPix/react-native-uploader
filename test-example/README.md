@@ -18,7 +18,6 @@ This example application demonstrates how to integrate and use the **@fastpix/re
 ## Prerequisites
 
 * Node.js 20+
-* Yarn
 * React Native development environment
 * Android Studio (Android)
 * Xcode 16+ (iOS)
@@ -29,7 +28,7 @@ This example application demonstrates how to integrate and use the **@fastpix/re
 ## Install
 
 ```bash
-yarn install
+npm install
 ```
 
 ### iOS
@@ -47,13 +46,13 @@ cd ..
 ### Android
 
 ```bash
-yarn android
+npm run android
 ```
 
 ### iOS
 
 ```bash
-yarn ios
+npm run ios
 ```
 
 ---

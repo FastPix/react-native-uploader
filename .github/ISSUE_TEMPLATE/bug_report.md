@@ -25,8 +25,6 @@ Install the FastPix React Native Uploads SDK:
 
 ```bash
 npm install @fastpix/react-native-uploads
-# or
-yarn add @fastpix/react-native-uploads
 ```
 
 This SDK depends on `react-native-blob-util` and `@react-native-community/netinfo`. On iOS, run `pod install` after installing.

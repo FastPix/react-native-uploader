@@ -32,8 +32,8 @@
     "!**/.*"
   ],
   "scripts": {
-    "example": "yarn workspace react-native-uploads-example",
-    "clean": "del-cli android/build example/android/build example/android/app/build example/ios/build lib",
+    "example": "npm run --workspace react-native-uploads-example",
+    "clean": "del-cli android/build test-example/android/build test-example/android/app/build test-example/ios/build lib",
     "prepare": "bob build && tsc --project tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "release": "release-it --only-version",
@@ -44,13 +44,29 @@
   "keywords": [
     "react-native",
     "ios",
-    "android"
+    "android",
+    "fastpix",
+    "upload",
+    "uploader",
+    "resumable-upload",
+    "chunked-upload",
+    "file-upload",
+    "video-upload",
+    "large-file-upload",
+    "pause-resume",
+    "upload-progress",
+    "network-recovery",
+    "sdk"
   ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/FastPix/react-native-uploader.git"
   },
-  "author": "FastPix, Inc <devs@fastpix.com> (https://github.com/FastPix)",
+  "author": {
+    "name": "FastPix-Dev",
+    "email": "devs@fastpix.com",
+    "url": "https://www.fastpix.com/"
+  },
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/FastPix/react-native-uploader/issues"
@@ -90,9 +106,8 @@
     "react-native": "*"
   },
   "workspaces": [
-    "example"
+    "test-example"
   ],
-  "packageManager": "yarn@4.11.0",
   "react-native-builder-bob": {
     "source": "src",
     "output": "lib",
@@ -134,7 +149,7 @@
   "jest": {
     "preset": "@react-native/jest-preset",
     "modulePathIgnorePatterns": [
-      "<rootDir>/example/node_modules",
+      "<rootDir>/test-example/node_modules",
       "<rootDir>/lib/",
       "<rootDir>/dist/"
     ],

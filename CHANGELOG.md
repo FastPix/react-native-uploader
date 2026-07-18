@@ -1,12 +1,5 @@
 # Changelog
 
-All notable changes to this project are documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
-
 ## [0.1.0] - 2026-07-02
 
 Initial release of the FastPix React Native Uploads SDK — reliable, resumable,
@@ -37,7 +30,7 @@ chunked uploads for large files on Android and iOS.
   `on()`/`off()` subscription and `state`, `progress`, and `stateHistory`
   getters.
 - **`enableLogs`** option for SDK-internal debug logging (with URL/path masking).
-- Example React Native app under `example/` demonstrating picking, upload,
+- Example React Native app under `test-example/` demonstrating picking, upload,
   progress, pause/resume/abort, retries, and network recovery.
 - Jest test suite covering the core engine, chunking, network monitor, event
   emitter, and validation, with coverage measured in CI.
