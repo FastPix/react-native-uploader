@@ -34,7 +34,8 @@
   "scripts": {
     "example": "npm run --workspace react-native-uploads-example",
     "clean": "del-cli android/build test-example/android/build test-example/android/app/build test-example/ios/build lib",
-    "prepare": "bob build && tsc --project tsconfig.build.json",
+    "build": "bob build && tsc --project tsconfig.build.json",
+    "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
     "release": "release-it --only-version",
     "lint": "eslint \"**/*.{js,ts,tsx}\"",
