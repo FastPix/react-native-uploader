@@ -1,0 +1,103 @@
+declare global {
+  const __DEV__: boolean | undefined;
+}
+
+// Upload State Machine
+export type UploadState =
+  | 'IDLE'
+  | 'STARTED'
+  | 'UPLOADING'
+  | 'PAUSED'
+  | 'RESUMED'
+  | 'FAILED'
+  | 'COMPLETED';
+
+// Event System 
+
+// All events the SDK can emit 
+export type UploadEventName =
+  | 'started'
+  | 'progress'
+  | 'chunkAttempt'
+  | 'chunkAttemptFailure'
+  | 'chunkSuccess'
+  | 'success'
+  | 'error'
+  | 'pause'
+  | 'resume'
+  | 'offline'
+  | 'online'
+  | 'stateChange'
+  | 'abort';
+
+export interface UploadEventPayloads {
+
+  started: { fileSize: number; endpoint: string };
+
+  progress: { bytesUploaded: number; bytesTotal: number; percentage: number };
+
+  chunkAttempt: { chunkIndex: number; attemptNumber: number , totalChunkNumbers: number};
+
+  chunkAttemptFailure: { chunkIndex: number; attemptNumber: number; error: Error };
+
+  chunkSuccess: { chunkIndex: number; offset: number };
+
+  success: undefined;
+
+  error: { message: string; code?: string; retriable: boolean };
+
+  pause: { reason: 'user' | 'network' };
+
+  resume: { fromOffset: number };
+
+  offline: undefined;
+
+  online: undefined;
+
+  abort: undefined;
+
+  stateChange: { from: UploadState; to: UploadState };
+}
+
+export type UploadEventCallback<T extends UploadEventName> = (
+  payload: UploadEventPayloads[T],
+) => void;
+
+// Options accepted by the FastPixUpload constructor
+export interface FastPixUploadOptions {
+
+  endpoint: string | (() => Promise<string>);
+
+  fileUri: string;
+
+  chunkSize?: number;
+
+  maxRetries?: number;
+
+  retryDelay?: number;
+
+  maxFileSize?: number;
+
+  enableLogs?: boolean;
+}
+
+// Chunk Metadata 
+export interface ChunkMeta {
+
+  index: number;
+
+  start: number;
+
+  end: number;
+
+  totalSize: number;
+}
+
+// Progress Snapshot 
+export interface UploadProgressSnapshot {
+  state: UploadState;
+  bytesUploaded: number;
+  bytesTotal: number;
+  percentage: number;
+  currentChunkIndex: number;
+}
