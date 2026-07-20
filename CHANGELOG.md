@@ -49,5 +49,3 @@ chunked uploads for large files on Android and iOS.
 - `abort()` now emits a `0%` progress snapshot before the `abort` event.
 - `IDLE → IDLE` transition on `abort()` and the abort callback.
 
-[Unreleased]: https://github.com/FastPix/react-native-uploader/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/FastPix/react-native-uploader/releases/tag/v0.1.0
