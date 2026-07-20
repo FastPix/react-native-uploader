@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.0] - 2026-07-02
+## [0.1.0] - beta
 
 Initial release of the FastPix React Native Uploads SDK — reliable, resumable,
 chunked uploads for large files on Android and iOS.
