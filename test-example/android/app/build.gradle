@@ -11,14 +11,12 @@ dependencyLocking {
  */
 react {
     /* Folders */
-    //   The root of your project, i.e. where "package.json" lives. Default is '../..'
-    // root = file("../../")
-    //   The folder where the react-native NPM package is. Default is ../../node_modules/react-native
-    // reactNativeDir = file("../../node_modules/react-native")
-    //   The folder where the react-native Codegen package is. Default is ../../node_modules/@react-native/codegen
-    // codegenDir = file("../../node_modules/@react-native/codegen")
-    //   The cli.js file which is the React Native CLI entrypoint. Default is ../../node_modules/react-native/cli.js
-    // cliFile = file("../../node_modules/react-native/cli.js")
+    //   Resolved through node so this works with npm workspaces, where the
+    //   dependencies are hoisted to the monorepo root instead of test-example/node_modules.
+    root = file("../../")
+    reactNativeDir = file(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile()
+    codegenDir = file(["node", "--print", "require.resolve('@react-native/codegen/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim()).getParentFile()
+    cliFile = file(["node", "--print", "require.resolve('@react-native-community/cli/package.json')"].execute(null, rootDir).text.trim()).getParentFile().toPath().resolve("build/bin.js").toFile()
 
     /* Variants */
     //   The list of variants to that are debuggable. For those we're going to
