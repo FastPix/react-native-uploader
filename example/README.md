@@ -35,7 +35,7 @@ cd ..          # repository root
 npm install    # installs the SDK + this example, and builds the SDK
 ```
 
-After this, most packages live in `<repo-root>/node_modules`, and `test-example/node_modules`
+After this, most packages live in `<repo-root>/node_modules`, and `example/node_modules`
 will look almost empty. That is expected — the Android and Metro configs resolve packages
 through Node, so they find them wherever npm hoisted them.
 
@@ -112,7 +112,7 @@ npm run ios
 
 | Symptom | Cause | Fix |
 | ------- | ----- | --- |
-| `Included build '.../node_modules/@react-native/gradle-plugin' does not exist` | Ran `npm install` inside `test-example/` only, or `node` is not on the `PATH` of the process running Gradle (typical for Android Studio + `nvm`). | Run `npm install` from the repo root; launch Android Studio from a terminal or symlink node. |
+| `Included build '.../node_modules/@react-native/gradle-plugin' does not exist` | Ran `npm install` inside `example/` only, or `node` is not on the `PATH` of the process running Gradle (typical for Android Studio + `nvm`). | Run `npm install` from the repo root; launch Android Studio from a terminal or symlink node. |
 | `CreateUploadError` / network error while online | No `.env` file, or Metro cached the old (empty) values. | `cp .env.example .env`, fill all three values, then `npm start -- --reset-cache`. |
 | `HTTP 401` from the upload API | Wrong `Access_Token_Id` / `Secret_Key`. | Regenerate credentials in the FastPix Dashboard. |
 | `HTTP 404` from the upload API | `Base_Api_Url` includes a path such as `/upload`. | Set the base URL only: `https://api.fastpix.io/v1/on-demand`. |

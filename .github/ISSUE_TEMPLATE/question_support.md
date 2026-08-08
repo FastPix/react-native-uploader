@@ -84,7 +84,7 @@ If relevant, paste your current upload configuration.
 - [ ] API Reference / Configuration Parameters
 - [ ] Lifecycle Events Reference
 - [ ] Troubleshooting section
-- [ ] Example app (`test-example/`)
+- [ ] Example app (`example/`)
 - [ ] GitHub Issues
 - [ ] Other (describe):
 
