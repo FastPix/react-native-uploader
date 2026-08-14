@@ -1,0 +1,13 @@
+{
+  "name": "fastpix-uploads-expo-example-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Expo example for Fastpix react-native-uploader",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

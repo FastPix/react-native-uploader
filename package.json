@@ -33,7 +33,8 @@
   ],
   "scripts": {
     "example": "npm run --workspace react-native-uploads-example",
-    "clean": "del-cli android/build example/android/build example/android/app/build example/ios/build lib",
+    "example:expo": "npm --prefix example/expo start",
+    "clean": "del-cli android/build example/react-native/android/build example/react-native/android/app/build example/react-native/ios/build lib",
     "build": "bob build && tsc --project tsconfig.build.json",
     "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
@@ -107,7 +108,7 @@
     "react-native": "*"
   },
   "workspaces": [
-    "example"
+    "example/react-native"
   ],
   "react-native-builder-bob": {
     "source": "src",
