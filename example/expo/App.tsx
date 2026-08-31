@@ -2,13 +2,16 @@ import { FastPixUpload } from "@fastpix/react-native-uploads";
 import * as ImagePicker from "expo-image-picker";
 import { StatusBar } from "expo-status-bar";
 import { useRef, useState } from "react";
-import { Button, StyleSheet, Text, View } from "react-native";
+import { Button, Platform, StyleSheet, Text, View } from "react-native";
 
 // Your backend route that creates a FastPix signed upload URL.
-// - iOS Simulator / Android emulator: http://localhost:8787 reaches your Mac.
-//   (Android emulator: use http://10.0.2.2:8787)
+// - iOS Simulator: http://localhost:8787 reaches your machine.
+// - Android emulator: 10.0.2.2 is the emulator's alias for your machine.
 // - Physical device: use your computer's LAN IP, e.g. http://192.168.1.20:8787
-const CREATE_UPLOAD_ENDPOINT = "http://localhost:8787/uploads";
+const CREATE_UPLOAD_ENDPOINT = Platform.select({
+  android: "http://10.0.2.2:8787/uploads",
+  default: "http://localhost:8787/uploads",
+});
 
 type Status = "idle" | "uploading" | "paused" | "success" | "error";
 

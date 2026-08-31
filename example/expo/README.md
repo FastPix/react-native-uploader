@@ -78,7 +78,7 @@ running. (You can also pass creds inline instead of a `.env` file:
 `App.tsx` has one constant near the top:
 
 ```ts
-const CREATE_UPLOAD_ENDPOINT = "http://localhost:8787/uploads";
+const CREATE_UPLOAD_ENDPOINT = 'http://localhost:8787/uploads';
 ```
 
 - **iOS Simulator:** `http://localhost:8787/uploads` works as-is.
@@ -118,13 +118,13 @@ Tap **Pick a video to upload**, choose a clip, and watch it upload. Use
 
    ```ts
    const upload = new FastPixUpload({
-     endpoint: createUploadUrl,        // async () => string
-     fileUri: asset.uri,               // file:// URI from the picker
-     chunkSize: 5 * 1024,              // 5 MB, in KB (multiple of 256 KB)
+     endpoint: createUploadUrl, // async () => string
+     fileUri: asset.uri, // file:// URI from the picker
+     chunkSize: 5 * 1024, // 5 MB, in KB (multiple of 256 KB)
    });
-   upload.on("progress", ({ percentage }) => setPercentage(percentage));
-   upload.on("success", () => setStatus("success"));
-   upload.on("error", ({ message }) => setStatus("error"));
+   upload.on('progress', ({ percentage }) => setPercentage(percentage));
+   upload.on('success', () => setStatus('success'));
+   upload.on('error', ({ message }) => setStatus('error'));
    await upload.start();
    ```
 
@@ -154,6 +154,16 @@ device upload URL you get by omitting it (this backend already omits it).
 **A chunk fails with `HTTP 400` only for larger files.**
 `chunkSize` must be a multiple of **256 KB**. `5 * 1024` (5 MB) is fine; keep any
 custom value 256 KB-aligned.
+
+**Android: `SDK location not found. Define a valid SDK location with an ANDROID_HOME…`**
+Set the `ANDROID_HOME` environment variable to your Android SDK location (and
+add the SDK's `platform-tools` directory to your `PATH`), or put
+`sdk.dir=<path-to-sdk>` in `android/local.properties`.
+
+**Android: `Execution failed for JdkImageTransform … jlink` errors.**
+Gradle is running on a too-new JDK. Point it at a JDK 17–21 — the one bundled
+with Android Studio works — by setting `org.gradle.java.home=<path-to-jdk>` in
+`~/.gradle/gradle.properties` (or `JAVA_HOME`).
 
 **The picker never opens on iOS.**
 The photo-library permission string comes from the `expo-image-picker` config
