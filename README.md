@@ -50,7 +50,7 @@ A signed URL is a pre-authenticated URL that allows secure, direct uploads to Fa
 
 ### Sample Code: Generating a Signed URL
 
-Here is a self-contained service that calls the FastPix Direct Upload API and returns a signed URL. It uses `axios` and `base-64` for the Basic Auth header (the same approach used by the bundled example app in [`test-example/src/Services/ApiService.ts`](test-example/src/Services/ApiService.ts)):
+Here is a self-contained service that calls the FastPix Direct Upload API and returns a signed URL. It uses `axios` and `base-64` for the Basic Auth header (the same approach used by the bundled example app in [`example/react-native/src/Services/ApiService.ts`](example/react-native/src/Services/ApiService.ts)):
 
 > This is **your** backend/service code, not part of the SDK. Install its helpers with `npm install axios base-64`. On a Node backend you can drop `base-64` and use `Buffer.from(...).toString("base64")` instead.
 
@@ -218,7 +218,7 @@ await upload.resume();     // re-syncs the server offset, then continues
 
 ### Full React component: progress bar with pause / resume / abort
 
-A complete, copy-paste example wiring the resumable lifecycle to UI controls. The same flow is implemented end-to-end in the bundled [`test-example/`](test-example/) app.
+A complete, copy-paste example wiring the resumable lifecycle to UI controls. The same flow is implemented end-to-end in the bundled [`example/react-native/`](example/react-native/) app.
 
 ```jsx
 import React, { useEffect, useRef, useState } from "react";
@@ -551,7 +551,10 @@ The example demonstrates:
 * Network recovery
 * Error handling
 
-Refer to the **`test-example/`** directory for the complete implementation.
+This repo ships two runnable examples:
+
+* **[`example/react-native/`](example/react-native)** — full React Native CLI app (logs, chunk stats, configurable options). The complete reference implementation.
+* **[`example/expo/`](example/expo)** — a minimal **Expo** app (pick a video, progress bar, pause/resume) with a small backend. Good starting point for Expo projects.
 
 ## Troubleshooting
 

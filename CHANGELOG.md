@@ -30,7 +30,7 @@ chunked uploads for large files on Android and iOS.
   `on()`/`off()` subscription and `state`, `progress`, and `stateHistory`
   getters.
 - **`enableLogs`** option for SDK-internal debug logging (with URL/path masking).
-- Example React Native app under `test-example/` demonstrating picking, upload,
+- Example React Native app under `example/` demonstrating picking, upload,
   progress, pause/resume/abort, retries, and network recovery.
 - Jest test suite covering the core engine, chunking, network monitor, event
   emitter, and validation, with coverage measured in CI.

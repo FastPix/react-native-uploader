@@ -1,7 +1,7 @@
 /**
  * FastPixUpload.test.ts
- * Lives in __tests__/ at the project root.
- * All paths are relative to __tests__/, i.e. src is at ../src/
+ * Lives in tests/ at the project root.
+ * All paths are relative to tests/, i.e. src is at ../src/
  */
 
 import { FastPixUpload } from '../src/core/FastPixUpload';

@@ -26,14 +26,15 @@
     "!android/gradlew",
     "!android/gradlew.bat",
     "!android/local.properties",
-    "!**/__tests__",
+    "!**/tests",
     "!**/__fixtures__",
     "!**/__mocks__",
     "!**/.*"
   ],
   "scripts": {
     "example": "npm run --workspace react-native-uploads-example",
-    "clean": "del-cli android/build test-example/android/build test-example/android/app/build test-example/ios/build lib",
+    "example:expo": "npm --prefix example/expo start",
+    "clean": "del-cli android/build example/react-native/android/build example/react-native/android/app/build example/react-native/ios/build lib",
     "build": "bob build && tsc --project tsconfig.build.json",
     "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
@@ -107,7 +108,7 @@
     "react-native": "*"
   },
   "workspaces": [
-    "test-example"
+    "example/react-native"
   ],
   "react-native-builder-bob": {
     "source": "src",
@@ -155,8 +156,8 @@
       "<rootDir>/dist/"
     ],
     "testMatch": [
-      "**/__tests__/**/*.test.ts",
-      "**/__tests__/**/*.test.tsx"
+      "**/tests/**/*.test.ts",
+      "**/tests/**/*.test.tsx"
     ]
   },
   "create-react-native-library": {

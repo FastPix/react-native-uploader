@@ -12,7 +12,7 @@ dependencyLocking {
 react {
     /* Folders */
     //   Resolved through node so this works with npm workspaces, where the
-    //   dependencies are hoisted to the monorepo root instead of test-example/node_modules.
+    //   dependencies are hoisted to the monorepo root instead of example/node_modules.
     root = file("../../")
     reactNativeDir = file(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile()
     codegenDir = file(["node", "--print", "require.resolve('@react-native/codegen/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim()).getParentFile()
