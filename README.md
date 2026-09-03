@@ -1,25 +1,18 @@
-# React Native Uploads SDK
+# FastPix React Native Uploads SDK - resumable, chunked video and file uploads for iOS and Android
 
-The **FastPix React Native Uploads SDK** provides reliable, resumable, and high-performance uploads for large files in React Native applications. It supports chunked uploads, automatic retries, pause and resume, network recovery, and real-time progress tracking on both Android and iOS.
+[![npm version](https://img.shields.io/npm/v/@fastpix/react-native-uploads)](https://www.npmjs.com/package/@fastpix/react-native-uploads)
+[![npm downloads](https://img.shields.io/npm/dm/@fastpix/react-native-uploads)](https://www.npmjs.com/package/@fastpix/react-native-uploads)
+[![license](https://img.shields.io/npm/l/@fastpix/react-native-uploads)](https://github.com/FastPix/react-native-uploader/blob/main/LICENSE)
+[![platforms](https://img.shields.io/badge/platforms-iOS%20%7C%20Android-000000?logo=apple&logoColor=white)](https://github.com/FastPix/react-native-uploader)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 
-> Please note that this SDK is designed to work only with **FastPix** and is not a general-purpose uploads SDK.
+The **FastPix React Native Uploads SDK** (`@fastpix/react-native-uploads`) provides reliable, resumable, high-performance uploads for large videos and files in React Native apps. It handles chunked uploads, automatic per-chunk retries, pause and resume, network recovery, and real-time progress tracking on both Android and iOS.
 
-## Table of Contents
+**Works with:** React Native 0.70+ · iOS 13+ · Android 5.0+ (API 21) · TypeScript · any file picker (`file://` URIs)
 
-- [Features](#features)
-- [Prerequisites](#prerequisites)
-- [Platform Support](#platform-support)
-- [Installation](#installation)
-- [Basic Usage](#basic-usage)
-- [Resumable Uploads: Pause, Resume & Network Recovery](#resumable-uploads-pause-resume--network-recovery)
-- [Chunk-Level Retry Tracking](#chunk-level-retry-tracking)
-- [Lifecycle Events Reference](#lifecycle-events-reference)
-- [Upload Control Methods](#upload-control-methods)
-- [API Reference](#api-reference)
-  - [Configuration Parameters](#configuration-parameters)
-- [Example App](#example-app)
-- [Troubleshooting](#troubleshooting)
-- [Additional References](#additional-references)
+📖 **Docs:** https://fastpix.com/docs/upload-videos/upload-videos-from-device &nbsp;·&nbsp; 📦 **npm:** https://www.npmjs.com/package/@fastpix/react-native-uploads &nbsp;·&nbsp; 🚀 **Dashboard:** https://dashboard.fastpix.com
+
+> Note that this SDK is designed to work only with **FastPix** and is not a general-purpose uploads SDK.
 
 ## Features
 
@@ -32,9 +25,96 @@ The **FastPix React Native Uploads SDK** provides reliable, resumable, and high-
 * **Flexible File URI Support** – Accepts `file://` URIs and plain filesystem paths, with automatic URL-decoding of percent-encoded paths.
 * **Lifecycle Events** – Listen to upload progress, state changes, and completion events.
 
-## Prerequisites
+<br />
 
-### Generate a signed upload URL
+## Start here
+
+If you are using the FastPix React Native Uploads SDK for the first time, follow these steps in order:
+
+1. [Check your environment](#check-your-environment)
+2. [Install the SDK](#install-the-sdk)
+3. [Generate a signed upload URL](#generate-a-signed-upload-url)
+4. [Upload your first file](#upload-your-first-file)
+5. [Verify your upload](#verify-your-upload)
+6. [Understand the upload workflow](#understand-the-upload-workflow)
+
+Do not skip the verification steps. If an environment, install, or signed-URL problem occurs, fix it before continuing.
+
+<br />
+
+### Before you begin
+
+To use the SDK, make sure you have:
+
+- Node.js 18 or later.
+- A React Native app (0.70+); if you do not have one, [Install the SDK](#install-the-sdk) shows how to create it.
+- iOS: Xcode and CocoaPods (macOS), plus an iOS Simulator or a physical iPhone (iOS 13+).
+- Android: JDK 17 and Android Studio (SDK and an emulator), or a physical Android device (Android 5.0 / API 21+).
+- A FastPix account, with an Access Token and a Secret Key.
+- A video or file to upload, available as a `file://` URI (typically from a media picker).
+
+#### Platform Support
+
+| Platform     | Minimum version    |
+| ------------ | ------------------ |
+| Android      | API 21 (Android 5.0) |
+| iOS          | iOS 13.0           |
+| React Native | 0.70+              |
+
+FastPix uploads use a **signed URL**: your Access Token and Secret Key stay on your backend and are never shipped in the app. You generate a short-lived signed URL on your server (see [Generate a signed upload URL](#generate-a-signed-upload-url)) and hand only that URL to the SDK.
+
+> **Security:** Never ship your Access Token or Secret Key in the app bundle. Generate signed URLs from your backend and return only the signed URL to the client.
+
+<br />
+
+## Check your environment
+
+React Native needs Node plus a native build toolchain, not a single runtime. Check Node first:
+
+```bash
+node --version
+```
+
+The output should be `v18` or later. Then run the React Native environment doctor, which checks Xcode, CocoaPods, the JDK, the Android SDK, and available simulators and emulators in one pass:
+
+```bash
+npx react-native doctor
+```
+
+Fix anything it flags before you install the SDK. For a full walkthrough, see the React Native [environment setup guide](https://reactnative.dev/docs/set-up-your-environment).
+
+<br />
+
+## Install the SDK
+
+If you do not have a React Native app yet, create one first:
+
+```bash
+npx @react-native-community/cli@latest init FastPixUploaderDemo
+cd FastPixUploaderDemo
+```
+
+Then install the SDK using npm or your preferred package manager:
+
+```bash
+npm install @fastpix/react-native-uploads
+```
+
+The SDK bundles its runtime dependencies (`@react-native-community/netinfo`, `react-native-blob-util`, and `axios`), so there are no peer dependencies to install manually.
+
+### iOS — install native pods
+
+The bundled native modules auto-link on React Native 0.70+. After installing the package, run:
+
+```bash
+cd ios && pod install && cd ..
+```
+
+**Android:** No manual linking or extra setup is required — the native modules auto-link.
+
+<br />
+
+## Generate a signed upload URL
 
 To get started with the SDK, you will need a signed URL.
 
@@ -42,11 +122,15 @@ To make API requests, you'll need a valid **Access Token** and **Secret Key**. S
 
 Once you have your credentials, use the [Upload media from device](https://fastpix.com/docs/video-on-demand-api/upload-and-import-videos/direct-upload-video-media) API to generate a signed URL for uploading media.
 
+<br />
+
 ### What is a Signed URL?
 
 A signed URL is a pre-authenticated URL that allows secure, direct uploads to FastPix storage without exposing your **Access Token** and **Secret Key** inside your mobile app. You create the URL on a trusted server (or a short-lived backend call), then hand only that URL to the SDK on the device.
 
 > **Never ship your `Access Token` / `Secret Key` in the app bundle.** Generate signed URLs from your backend and return only the signed URL to the client.
+
+<br />
 
 ### Sample Code: Generating a Signed URL
 
@@ -92,6 +176,10 @@ export async function generateSignedUrl(metadata = { uploadedBy: "react_native_a
 }
 ```
 
+> **Endpoint note:** FastPix is migrating API hosts from `.io` to `.com`. The `api.fastpix.io` host above still works for backward compatibility, but new integrations should prefer `https://api.fastpix.com/v1/on-demand`.
+
+<br />
+
 ### Integration: create a Signed URL, then Upload
 
 Because `endpoint` accepts an **async factory** (`() => Promise<string>`), you can plug the signed-URL generator straight in. The async factory runs once when `start()` is called, so the URL is created lazily and stays fresh:
@@ -129,37 +217,9 @@ export async function uploadVideo(fileUri) {
 
 This example uses every constructor option — see [Configuration Parameters](#configuration-parameters) for the full table with types, defaults, and constraints.
 
-## Platform Support
+<br />
 
-| Platform     | Minimum version    |
-| ------------ | ------------------ |
-| Android      | API 21 (Android 5.0) |
-| iOS          | iOS 13.0           |
-| React Native | 0.70+              |
-
-## Installation
-
-To install the SDK, use npm or your preferred package manager:
-
-```bash
-npm install @fastpix/react-native-uploads
-```
-
-The SDK bundles its runtime dependencies (`@react-native-community/netinfo`, `react-native-blob-util`, and `axios`), so there are no peer dependencies to install manually.
-
-### iOS — install native pods
-
-The bundled native modules auto-link on React Native 0.70+. After installing the package, run:
-
-```bash
-cd ios && pod install && cd ..
-```
-
-**Android:** No manual linking or extra setup is required — the native modules auto-link.
-
-## Basic Usage
-
-### Integration
+## Upload your first file
 
 ```javascript
 import { FastPixUpload } from "@fastpix/react-native-uploads";
@@ -177,6 +237,57 @@ await upload.start();
 
 **Parameters used above:** `endpoint`, `fileUri`, `chunkSize` — see [Configuration Parameters](#configuration-parameters) for types, defaults, and constraints.
 
+<br />
+
+### Verify your upload
+
+Run the app and start an upload. Your integration is working when:
+
+- The `progress` event advances and reaches 100%, and the `success` event fires (see [Lifecycle Events Reference](#lifecycle-events-reference)).
+- The uploaded media appears in your [FastPix Dashboard](https://dashboard.fastpix.com/).
+
+Keep the `uploadId` returned when you generated the signed URL for tracking. If the upload never starts or fails, see [Troubleshooting](#troubleshooting).
+
+<br />
+
+## Understand the upload workflow
+
+Your backend creates a short-lived signed URL (so your Access Token and Secret Key never ship in the app); the SDK then uploads the file to that URL in resumable chunks and confirms each chunk's offset with the server, so any pause or network drop continues from where it left off.
+
+```mermaid
+flowchart TD
+    BE["Your backend<br/>(Access Token + Secret Key)"] -->|"POST /v1/on-demand/upload"| API["FastPix Direct Upload API"]
+    API -->|"returns signed URL"| APP["React Native app<br/>(file picker gives file:// URI)"]
+    APP -->|"endpoint = signed URL<br/>fileUri = file:// path"| SDK["new FastPixUpload(...)"]
+    SDK --> CH["Split file into chunks<br/>(5 MB - 500 MB each)"]
+    CH --> UP{"Upload each chunk"}
+    UP -->|"chunk confirmed"| NEXT["Server stores last offset"]
+    NEXT -->|"more chunks"| UP
+    UP -->|"network drop or error"| RETRY["Pause / retry that chunk<br/>resume from last offset"]
+    RETRY --> UP
+    NEXT -->|"all chunks done"| DONE["success event<br/>media ready in FastPix"]
+
+    classDef fp fill:#5D09C7,stroke:#5D09C7,color:#ffffff;
+    classDef ok fill:#0CB16D,stroke:#0CB16D,color:#ffffff;
+    class SDK,CH,UP fp;
+    class DONE ok;
+```
+
+<br />
+
+## Next steps
+
+After your first upload works, use the SDK to:
+
+- Pause, resume, and recover from network drops - see [Resumable Uploads: Pause, Resume & Network Recovery](#resumable-uploads-pause-resume--network-recovery).
+- Track retries per chunk - see [Chunk-Level Retry Tracking](#chunk-level-retry-tracking).
+- React to upload lifecycle events - see [Lifecycle Events Reference](#lifecycle-events-reference).
+- Control the upload (start, pause, resume, abort) - see [Upload Control Methods](#upload-control-methods).
+- Configure chunk size, retries, file-size limits, and more - see [API Reference](#api-reference).
+- Run a complete working screen - see [Example App](#example-app).
+
+<br />
+
 ## Resumable Uploads: Pause, Resume & Network Recovery
 
 Resumability is the core of this SDK. Every chunk that finishes uploading is acknowledged by the server, so a paused, interrupted, or network-dropped upload always continues from the **last server-confirmed offset** — completed chunks are never re-sent.
@@ -189,6 +300,8 @@ There are two ways an upload can pause:
 | **Network-initiated** | Connectivity is lost, or the transport switches (Wi-Fi ↔ cellular) | The SDK resumes **automatically** when connectivity returns |
 
 Both emit a `pause` event carrying a `reason` (`'user'` or `'network'`), so your UI can react appropriately.
+
+<br />
 
 ### Minimal pause / resume flow
 
@@ -215,6 +328,8 @@ await upload.resume();     // re-syncs the server offset, then continues
 ```
 
 **Parameters used above:** `endpoint`, `fileUri`, `chunkSize`, `maxRetries` — see [Configuration Parameters](#configuration-parameters) for types, defaults, and constraints.
+
+<br />
 
 ### Full React component: progress bar with pause / resume / abort
 
@@ -280,6 +395,8 @@ export function VideoUploader({ fileUri }) {
 
 **Parameters used above:** `endpoint`, `fileUri`, `chunkSize`, `maxRetries`, `retryDelay`, `enableLogs` — see [Configuration Parameters](#configuration-parameters) for types, defaults, and constraints.
 
+<br />
+
 ### Automatic network recovery
 
 The SDK automatically resumes uploads when network connectivity is restored. While an upload is in flight the SDK monitors connectivity via `@react-native-community/netinfo`:
@@ -289,6 +406,8 @@ The SDK automatically resumes uploads when network connectivity is restored. Whi
 * **Transport switches** (Wi-Fi ↔ cellular) while a socket is mid-flight → the SDK detects the dead connection, re-syncs the server offset, and continues — no stalled upload, no manual retry.
 
 An upload paused by you (`reason: 'user'`) is **not** auto-resumed on reconnect — that stays under your control, so a user-paused upload never restarts behind their back.
+
+<br />
 
 ## Chunk-Level Retry Tracking
 
@@ -315,6 +434,8 @@ upload.on("chunkSuccess", ({ chunkIndex }) => {
   console.log(`Chunk ${chunkIndex} uploaded`);
 });
 ```
+
+<br />
 
 ## Lifecycle Events Reference
 
@@ -383,6 +504,8 @@ upload.on("online", () => {
 });
 ```
 
+<br />
+
 ### Supported Events
 
 | Event                 | Description                                                  |
@@ -401,6 +524,7 @@ upload.on("online", () => {
 | `offline`             | Fired when network connectivity is lost.                     |
 | `online`              | Fired when network connectivity is restored.                 |
 
+<br />
 
 ## Upload Control Methods
 
@@ -430,6 +554,8 @@ You can control the upload lifecycle with the following methods:
   upload.abort(); // Permanently cancels and releases all resources; emits `abort` before removing listeners
   ```
 
+<br />
+
 ## API Reference
 
 ### `FastPixUpload`
@@ -449,6 +575,8 @@ The `FastPixUpload` constructor accepts the following parameters:
 | `retryDelay`               | `number` (in ms)                    | Optional | Initial delay before the first retry. Each subsequent retry doubles the delay (exponential back-off). Default is `1000`.                          |
 | `maxFileSize`              | `number` (in KB)                 | Optional | Maximum allowed file size. `0` means no limit. Files exceeding this fail immediately before any network request. Default is `0`.                  |
 | `enableLogs`               | `boolean`                           | Optional | Enable SDK-internal debug logging to the console. Recommended for development; disable in production. Default is `false`.                         |
+
+<br />
 
 #### Example usage of integrating all parameters
 
@@ -478,6 +606,8 @@ await upload.start();
 // upload.abort();
 ```
 
+<br />
+
 ### Methods
 
 | Method | Signature | Description |
@@ -489,6 +619,8 @@ await upload.start();
 | `on(event, handler)`  | `(event, handler) => () => void` | Subscribes to a [lifecycle event](#supported-events). **Returns an unsubscribe function.** |
 | `off(event, handler)` | `(event, handler) => void`       | Manually removes a previously registered listener. |
 
+<br />
+
 ### Getters
 
 | Getter | Type | Description |
@@ -496,6 +628,8 @@ await upload.start();
 | `state`        | `UploadState` | The current state of the upload state machine. |
 | `progress`     | `UploadProgressSnapshot` | A point-in-time snapshot of upload progress (bytes, percentage, current chunk). |
 | `stateHistory` | `ReadonlyArray<{ from, to, at }>` | An ordered log of every state transition, each with a timestamp (`at`). |
+
+<br />
 
 ### Types
 
@@ -537,6 +671,8 @@ Describes the byte range of a single chunk. Exported for consumers that need to 
 
 For the full list of event payloads, see [Supported Events](#supported-events).
 
+<br />
+
 ## Example App
 
 A complete React Native example application is included in the repository to help you get started quickly.
@@ -556,6 +692,8 @@ This repo ships two runnable examples:
 * **[`example/react-native/`](example/react-native)** — full React Native CLI app (logs, chunk stats, configurable options). The complete reference implementation.
 * **[`example/expo/`](example/expo)** — a minimal **Expo** app (pick a video, progress bar, pause/resume) with a small backend. Good starting point for Expo projects.
 
+<br />
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -570,6 +708,52 @@ This repo ships two runnable examples:
 
 Enable `enableLogs: true` in the constructor to see detailed SDK-internal logs while diagnosing issues (disable in production).
 
+<br />
+
+## Which FastPix repo do I need?
+
+This SDK uploads from a React Native app. For other platforms and the backend piece:
+
+| I want to... | Repo |
+|---|---|
+| Generate signed upload URLs from a Node backend | [node-sdk](https://github.com/FastPix/node-sdk) |
+| Add resumable uploads in the browser (JS) | [web-uploads-sdk](https://github.com/FastPix/web-uploads-sdk) |
+| Add a React uploader component (web) | [react-web-uploader](https://github.com/FastPix/react-web-uploader) |
+| Add resumable uploads to a native iOS app | [iOS-Uploads](https://github.com/FastPix/iOS-Uploads) |
+| Play the uploaded video on the web | [web-player-component](https://github.com/FastPix/web-player-component) |
+
+Browse everything in the [FastPix organization](https://github.com/orgs/FastPix/repositories).
+
+<br />
+
+## FAQ
+
+**What does this SDK do?**
+It uploads large videos and files from a React Native app to FastPix in resumable chunks, with pause/resume, per-chunk retries, and automatic network recovery. See [Features](#features).
+
+**Which package do I install?**
+`npm install @fastpix/react-native-uploads`. See [Installation](#install-the-sdk).
+
+**Do I need a signed URL? Why?**
+Yes. You generate a short-lived signed URL on your backend so your Access Token and Secret Key never ship inside the app. The device only ever sees the signed URL. See [Generate a signed upload URL](#generate-a-signed-upload-url).
+
+**Does it work with Expo?**
+It ships native modules (NetInfo, blob-util), so it needs a bare/dev-client React Native build (0.70+), not Expo Go. See [Platform Support](#platform-support).
+
+**What is the minimum and maximum chunk size?**
+5 MB (5120 KB) to 500 MB (512000 KB), and the value must be a multiple of 256. See [Configuration Parameters](#configuration-parameters).
+
+**How does resume work after a network drop?**
+Each chunk's offset is confirmed by the server, so the upload continues from the last confirmed offset - completed chunks are never re-sent. Network-triggered pauses resume automatically. See [Resumable Uploads](#resumable-uploads-pause-resume--network-recovery).
+
+**Do I need to run `pod install`?**
+On iOS, yes: `cd ios && pod install`. Android auto-links with no extra steps. See [Installation](#install-the-sdk).
+
+**Is it written in TypeScript?**
+Yes - the SDK ships types, and all options, events, and getters are typed. See [API Reference](#api-reference).
+
+<br />
+
 ## Additional References
 
 [FastPix Homepage](https://www.fastpix.com/)
@@ -577,4 +761,4 @@ Enable `enableLogs: true` in the constructor to see detailed SDK-internal logs w
 
 ## Detailed Usage
 
-For more detailed steps and advanced usage, please refer to the official [FastPix Documentation](https://fastpix.com/docs/upload-videos/upload-videos-from-device#resumable-uploading-of-large-files).
+For more detailed steps and advanced usage, please refer to the official [FastPix Documentation](https://fastpix.com/docs/upload-videos/upload-videos-from-device#uploading-large-media-files).
